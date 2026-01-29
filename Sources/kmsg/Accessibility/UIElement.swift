@@ -223,6 +223,23 @@ public final class UIElement: @unchecked Sendable {
         return results
     }
 
+    /// Find descendants matching a predicate with early termination (breadth-first search)
+    public func findAll(where predicate: (UIElement) -> Bool, limit: Int) -> [UIElement] {
+        var results: [UIElement] = []
+        var queue = children
+
+        while !queue.isEmpty && results.count < limit {
+            let current = queue.removeFirst()
+            if predicate(current) {
+                results.append(current)
+                if results.count >= limit { break }
+            }
+            queue.append(contentsOf: current.children)
+        }
+
+        return results
+    }
+
     /// Find first descendant matching a predicate (breadth-first search)
     public func findFirst(where predicate: (UIElement) -> Bool) -> UIElement? {
         var queue = children
@@ -241,6 +258,11 @@ public final class UIElement: @unchecked Sendable {
     /// Find elements by role
     public func findAll(role: String) -> [UIElement] {
         findAll { $0.role == role }
+    }
+
+    /// Find elements by role with limit
+    public func findAll(role: String, limit: Int) -> [UIElement] {
+        findAll(where: { $0.role == role }, limit: limit)
     }
 
     /// Find element by identifier
