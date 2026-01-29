@@ -23,13 +23,19 @@ struct StatusCommand: ParsableCommand {
             return
         }
 
-        // Check KakaoTalk status
-        let isRunning = KakaoTalkApp.isRunning
-        print("KakaoTalk: \(isRunning ? "✓ Running" : "✗ Not Running")")
-
+        // Check KakaoTalk status - launch if not running
+        var isRunning = KakaoTalkApp.isRunning
         if !isRunning {
-            print("\nPlease launch KakaoTalk to continue.")
-            return
+            print("KakaoTalk: Not running, launching...")
+            if KakaoTalkApp.launch() != nil {
+                isRunning = true
+                print("KakaoTalk: ✓ Launched")
+            } else {
+                print("KakaoTalk: ✗ Failed to launch")
+                return
+            }
+        } else {
+            print("KakaoTalk: ✓ Running")
         }
 
         // Get detailed info if verbose
