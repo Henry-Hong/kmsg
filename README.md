@@ -27,7 +27,9 @@ cd kmsg
 swift build -c release
 
 # Install (optional)
-cp .build/release/kmsg /usr/local/bin/
+mkdir -p ~/.local/bin
+cp .build/release/kmsg ~/.local/bin/
+export PATH="$HOME/.local/bin:$PATH"
 ```
 
 ## Usage
