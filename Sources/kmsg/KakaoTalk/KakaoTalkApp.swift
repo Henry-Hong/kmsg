@@ -7,10 +7,14 @@ public final class KakaoTalkApp: Sendable {
 
     private let app: UIElement
 
-    public init() throws {
-        guard let runningApp = NSRunningApplication.runningApplications(
-            withBundleIdentifier: Self.bundleIdentifier
-        ).first else {
+    public init(autoLaunch: Bool = true) throws {
+        if Self.runningApplication == nil && autoLaunch {
+            guard Self.launch() != nil else {
+                throw KakaoTalkError.launchFailed
+            }
+        }
+
+        guard let runningApp = Self.runningApplication else {
             throw KakaoTalkError.appNotRunning
         }
 
@@ -29,9 +33,67 @@ public final class KakaoTalkApp: Sendable {
         NSRunningApplication.runningApplications(withBundleIdentifier: bundleIdentifier).first
     }
 
+    /// Launch KakaoTalk application
+    /// - Parameter timeout: Maximum time to wait for app to launch (default: 5 seconds)
+    /// - Returns: The running application if launched successfully
+    @discardableResult
+    public static func launch(timeout: TimeInterval = 5.0) -> NSRunningApplication? {
+        if let app = runningApplication {
+            return app
+        }
+
+        guard let appURL = NSWorkspace.shared.urlForApplication(withBundleIdentifier: bundleIdentifier) else {
+            return nil
+        }
+
+        let configuration = NSWorkspace.OpenConfiguration()
+        let semaphore = DispatchSemaphore(value: 0)
+
+        NSWorkspace.shared.openApplication(at: appURL, configuration: configuration) { _, _ in
+            semaphore.signal()
+        }
+
+        _ = semaphore.wait(timeout: .now() + timeout)
+
+        let startTime = Date()
+        while Date().timeIntervalSince(startTime) < timeout {
+            if let app = runningApplication {
+                return app
+            }
+            Thread.sleep(forTimeInterval: 0.1)
+        }
+
+        return runningApplication
+    }
+
     /// Activate KakaoTalk (bring to foreground)
     public func activate() {
-        Self.runningApplication?.activate()
+        guard let app = Self.runningApplication else { return }
+
+        // Unhide the app first if it's hidden
+        if app.isHidden {
+            app.unhide()
+        }
+
+        // Use activateIgnoringOtherApps to reliably bring to foreground
+        app.activate(options: [.activateIgnoringOtherApps])
+    }
+
+    /// Activate KakaoTalk and wait for the main window to be available
+    /// - Parameter timeout: Maximum time to wait for the window (default: 2 seconds)
+    /// - Returns: The main window if available within the timeout, nil otherwise
+    public func activateAndWaitForWindow(timeout: TimeInterval = 2.0) -> UIElement? {
+        activate()
+
+        let startTime = Date()
+        while Date().timeIntervalSince(startTime) < timeout {
+            if let window = mainWindow {
+                return window
+            }
+            Thread.sleep(forTimeInterval: 0.1)
+        }
+
+        return mainWindow
     }
 
     // MARK: - Windows
@@ -106,6 +168,7 @@ public final class KakaoTalkApp: Sendable {
 
 public enum KakaoTalkError: Error, CustomStringConvertible {
     case appNotRunning
+    case launchFailed
     case windowNotFound(String)
     case elementNotFound(String)
     case actionFailed(String)
@@ -115,6 +178,8 @@ public enum KakaoTalkError: Error, CustomStringConvertible {
         switch self {
         case .appNotRunning:
             return "KakaoTalk is not running. Please launch KakaoTalk first."
+        case .launchFailed:
+            return "Failed to launch KakaoTalk. Please launch it manually."
         case .windowNotFound(let name):
             return "Window not found: \(name)"
         case .elementNotFound(let description):
