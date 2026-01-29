@@ -32,8 +32,22 @@ struct SendCommand: ParsableCommand {
             return
         }
 
-        guard let mainWindow = kakao.activateAndWaitForWindow() else {
-            print("Could not find KakaoTalk main window.")
+        var mainWindow = kakao.activateAndWaitForWindow()
+
+        if mainWindow == nil {
+            print("Could not find KakaoTalk main window. Opening KakaoTalk...")
+            let process = Process()
+            process.executableURL = URL(fileURLWithPath: "/usr/bin/open")
+            process.arguments = ["/Applications/KakaoTalk.app"]
+            try? process.run()
+            process.waitUntilExit()
+
+            Thread.sleep(forTimeInterval: 2.0)
+            mainWindow = kakao.activateAndWaitForWindow(timeout: 5.0)
+        }
+
+        guard let mainWindow = mainWindow else {
+            print("Could not find KakaoTalk main window after opening.")
             throw ExitCode.failure
         }
 
@@ -46,73 +60,62 @@ struct SendCommand: ParsableCommand {
             return
         }
 
-        // 2. Search in chat list
-        print("No existing chat window. Searching in chat list...")
+        // 2. Open chat via search
+        print("No existing chat window. Opening via search...")
+        let chatWindow = try openChatViaSearch(recipient: recipient, in: mainWindow, kakao: kakao)
 
-        guard let chatItem = findChatInList(recipient: recipient, in: mainWindow) else {
-            print("Could not find '\(recipient)' in the chat list.")
-            print("\nTip: Make sure you're on the 'Chats' (채팅) tab in KakaoTalk.")
-            print("Use 'kmsg chats' to see available chats.")
-            throw ExitCode.failure
-        }
-
-        // 3. Open chat from list
-        let chatWindow = try openChatFromList(chatItem: chatItem, recipient: recipient, kakao: kakao)
-
-        // 4. Send message
+        // 3. Send message
         try sendMessageToWindow(chatWindow)
     }
 
-    private func findChatInList(recipient: String, in mainWindow: UIElement) -> UIElement? {
-        let tables = mainWindow.findAll(role: kAXTableRole, limit: 1)
-        let outlines = mainWindow.findAll(role: kAXOutlineRole, limit: 1)
-        let lists = mainWindow.findAll(role: kAXListRole, limit: 1)
+    private func openChatViaSearch(recipient: String, in mainWindow: UIElement, kakao: KakaoTalkApp) throws -> UIElement {
+        print("Searching for '\(recipient)' using search button...")
 
-        var chatItems: [UIElement] = []
-
-        for table in tables {
-            chatItems.append(contentsOf: table.findAll(role: kAXRowRole))
-        }
-        for outline in outlines {
-            chatItems.append(contentsOf: outline.findAll(role: kAXRowRole))
-        }
-        for list in lists {
-            chatItems.append(contentsOf: list.children)
+        // 1. Find search button (magnifying glass icon)
+        let buttons = mainWindow.findAll(role: kAXButtonRole)
+        guard let searchButton = buttons.first(where: { button in
+            let title = button.title ?? ""
+            let identifier = button.identifier ?? ""
+            return title.contains("검색") || title.contains("search") ||
+                   identifier.contains("search") || identifier.contains("Search")
+        }) else {
+            throw KakaoTalkError.elementNotFound("Search button not found")
         }
 
-        return chatItems.first { item in
-            let title = extractChatTitle(from: item)
-            return title.contains(recipient)
-        }
-    }
+        // 2. Click search button
+        try searchButton.press()
+        Thread.sleep(forTimeInterval: 0.3)
 
-    private func extractChatTitle(from element: UIElement) -> String {
-        if let title = element.title, !title.isEmpty {
-            return title
+        // 3. Find search field
+        let textFields = mainWindow.findAll(role: kAXTextFieldRole)
+        guard let searchField = textFields.first else {
+            throw KakaoTalkError.elementNotFound("Search field not found")
         }
 
-        let staticTexts = element.findAll(role: kAXStaticTextRole)
-        for text in staticTexts {
-            if let value = text.stringValue, !value.isEmpty {
-                return value
+        // 4. Focus search field and type query
+        try searchField.focus()
+        Thread.sleep(forTimeInterval: 0.1)
+        typeText(recipient)
+        Thread.sleep(forTimeInterval: 0.5)
+
+        // 5. Find matching result in search results
+        let results = mainWindow.findAll(role: kAXRowRole) + mainWindow.findAll(role: kAXCellRole)
+        guard let matchingResult = results.first(where: { result in
+            let text = result.title ?? result.stringValue ?? ""
+            let staticTexts = result.findAll(role: kAXStaticTextRole)
+            let hasMatch = text.contains(recipient) || staticTexts.contains {
+                ($0.stringValue ?? "").contains(recipient)
             }
+            return hasMatch
+        }) else {
+            pressEscape()
+            throw KakaoTalkError.elementNotFound("No search result found for '\(recipient)'")
         }
 
-        return ""
-    }
+        // 6. Click matching result
+        try matchingResult.press()
 
-    private func openChatFromList(chatItem: UIElement, recipient: String, kakao: KakaoTalkApp) throws -> UIElement {
-        print("Opening chat with '\(recipient)' from chat list...")
-
-        do {
-            try chatItem.press()
-        } catch {
-            try chatItem.focus()
-            Thread.sleep(forTimeInterval: 0.1)
-            pressEnter()
-        }
-
-        // Wait for chat window to open
+        // 7. Wait for chat window to open
         let timeout: TimeInterval = 3.0
         let startTime = Date()
 
@@ -126,6 +129,18 @@ struct SendCommand: ParsableCommand {
         }
 
         throw KakaoTalkError.windowNotFound("Chat window for '\(recipient)' did not open")
+    }
+
+    private func pressEscape() {
+        let source = CGEventSource(stateID: .hidSystemState)
+        let escKeyCode: CGKeyCode = 53
+
+        if let keyDown = CGEvent(keyboardEventSource: source, virtualKey: escKeyCode, keyDown: true) {
+            keyDown.post(tap: .cghidEventTap)
+        }
+        if let keyUp = CGEvent(keyboardEventSource: source, virtualKey: escKeyCode, keyDown: false) {
+            keyUp.post(tap: .cghidEventTap)
+        }
     }
 
     private func sendMessageToWindow(_ window: UIElement) throws {
