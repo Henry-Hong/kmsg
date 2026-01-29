@@ -13,7 +13,7 @@ A CLI tool for KakaoTalk on macOS using Accessibility APIs.
 ## Requirements
 
 - macOS 13.0+
-- KakaoTalk for Mac
+- KakaoTalk for macOS
 - Accessibility permission granted
 
 ## Installation
