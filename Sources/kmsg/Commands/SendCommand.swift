@@ -32,10 +32,10 @@ struct SendCommand: ParsableCommand {
             return
         }
 
-        kakao.activate()
-        Thread.sleep(forTimeInterval: 0.3)
+        // Activate KakaoTalk and wait for window to be available
+        _ = kakao.activateAndWaitForWindow()
 
-        // Find or open the chat window for the recipient
+        // Find the chat window for the recipient
         print("Looking for chat with '\(recipient)'...")
 
         // First, try to find an existing chat window with this recipient

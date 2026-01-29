@@ -21,15 +21,8 @@ struct ChatsCommand: ParsableCommand {
 
         let kakao = try KakaoTalkApp()
 
-        // Activate KakaoTalk to ensure UI is accessible
-        kakao.activate()
-
-        // Give the app a moment to become active
-        Thread.sleep(forTimeInterval: 0.2)
-
-        // Try to find the chat list
-        // KakaoTalk's chat list is typically in a table or list view
-        guard let mainWindow = kakao.mainWindow else {
+        // Activate KakaoTalk and wait for the main window to be available
+        guard let mainWindow = kakao.activateAndWaitForWindow() else {
             print("Could not find KakaoTalk main window.")
             print("Make sure KakaoTalk is open and visible.")
             throw ExitCode.failure
@@ -39,27 +32,34 @@ struct ChatsCommand: ParsableCommand {
 
         // Find elements that might be chat list items
         // Common roles: AXRow, AXCell, AXStaticText in a table/outline view
-        let tables = mainWindow.findAll(role: kAXTableRole)
-        let outlines = mainWindow.findAll(role: kAXOutlineRole)
-        let lists = mainWindow.findAll(role: kAXListRole)
+        // Use limit to enable early termination and avoid full UI tree scan
+        let tables = mainWindow.findAll(role: kAXTableRole, limit: 1)
+        let outlines = mainWindow.findAll(role: kAXOutlineRole, limit: 1)
+        let lists = mainWindow.findAll(role: kAXListRole, limit: 1)
 
         var chatItems: [UIElement] = []
 
         // Check tables for rows
         for table in tables {
-            let rows = table.findAll(role: kAXRowRole)
+            let remaining = limit - chatItems.count
+            if remaining <= 0 { break }
+            let rows = table.findAll(role: kAXRowRole, limit: remaining)
             chatItems.append(contentsOf: rows)
         }
 
         // Check outlines for rows
         for outline in outlines {
-            let rows = outline.findAll(role: kAXRowRole)
+            let remaining = limit - chatItems.count
+            if remaining <= 0 { break }
+            let rows = outline.findAll(role: kAXRowRole, limit: remaining)
             chatItems.append(contentsOf: rows)
         }
 
         // Check lists for items
         for list in lists {
-            let items = list.children
+            let remaining = limit - chatItems.count
+            if remaining <= 0 { break }
+            let items = Array(list.children.prefix(remaining))
             chatItems.append(contentsOf: items)
         }
 
