@@ -69,26 +69,41 @@ struct SendCommand: ParsableCommand {
     }
 
     private func openChatViaSearch(recipient: String, in mainWindow: UIElement, kakao: KakaoTalkApp) throws -> UIElement {
-        print("Searching for '\(recipient)' using search button...")
+        print("Searching for '\(recipient)'...")
 
-        // 1. Find search button (magnifying glass icon)
-        let buttons = mainWindow.findAll(role: kAXButtonRole)
-        guard let searchButton = buttons.first(where: { button in
-            let title = button.title ?? ""
-            let identifier = button.identifier ?? ""
-            return title.contains("검색") || title.contains("search") ||
-                   identifier.contains("search") || identifier.contains("Search")
-        }) else {
-            throw KakaoTalkError.elementNotFound("Search button not found")
+        // 1. Find search field (may already be visible or need to click search button first)
+        var textFields = mainWindow.findAll(role: kAXTextFieldRole)
+        var searchField = textFields.first
+
+        // If no text field found, try clicking the search button (magnifying glass)
+        if searchField == nil {
+            let buttons = mainWindow.findAll(role: kAXButtonRole)
+            // The search button is typically one of the buttons without a title/identifier
+            // Try clicking buttons that might be the search button
+            for button in buttons {
+                let title = button.title ?? ""
+                let identifier = button.identifier ?? ""
+                // Skip known navigation buttons
+                if identifier == "friends" || identifier == "chatrooms" || identifier == "more" {
+                    continue
+                }
+                // Skip buttons with specific titles
+                if title == "Chats" || title == "OpenChat" || title == "Button" {
+                    continue
+                }
+                // Try this button
+                try? button.press()
+                Thread.sleep(forTimeInterval: 0.3)
+
+                textFields = mainWindow.findAll(role: kAXTextFieldRole)
+                if let field = textFields.first {
+                    searchField = field
+                    break
+                }
+            }
         }
 
-        // 2. Click search button
-        try searchButton.press()
-        Thread.sleep(forTimeInterval: 0.3)
-
-        // 3. Find search field
-        let textFields = mainWindow.findAll(role: kAXTextFieldRole)
-        guard let searchField = textFields.first else {
+        guard let searchField = searchField else {
             throw KakaoTalkError.elementNotFound("Search field not found")
         }
 
