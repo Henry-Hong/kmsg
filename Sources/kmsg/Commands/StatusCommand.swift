@@ -56,6 +56,29 @@ struct StatusCommand: ParsableCommand {
             }
         }
 
-        print("\n✓ Ready to use kmsg commands")
+        print("\n✓ Ready to use kmsg commands\n")
+        printUsage()
+    }
+
+    private func printUsage() {
+        print("""
+        USAGE: kmsg <command> [options]
+
+        COMMANDS:
+          status    Check KakaoTalk and accessibility status
+          chats     List chat rooms
+          read      Read messages from a chat room
+          send      Send a message to a chat room
+          inspect   Inspect KakaoTalk UI hierarchy (debug)
+
+        OPTIONS:
+          --help    Show help for any command
+          --version Show version
+
+        EXAMPLES:
+          kmsg chats                      List all chat rooms
+          kmsg read "친구이름"             Read messages from chat
+          kmsg send "친구이름" "안녕!"      Send a message
+        """)
     }
 }
