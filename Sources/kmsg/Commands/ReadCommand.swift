@@ -23,8 +23,26 @@ struct ReadCommand: ParsableCommand {
         }
 
         let kakao = try KakaoTalkApp()
-        kakao.activate()
-        Thread.sleep(forTimeInterval: 0.2)
+
+        // Activate KakaoTalk and wait for the main window to be available
+        var mainWindow = kakao.activateAndWaitForWindow()
+
+        if mainWindow == nil {
+            print("Could not find KakaoTalk main window. Opening KakaoTalk...")
+            let process = Process()
+            process.executableURL = URL(fileURLWithPath: "/usr/bin/open")
+            process.arguments = ["/Applications/KakaoTalk.app"]
+            try? process.run()
+            process.waitUntilExit()
+
+            Thread.sleep(forTimeInterval: 2.0)
+            mainWindow = kakao.activateAndWaitForWindow(timeout: 5.0)
+        }
+
+        guard mainWindow != nil else {
+            print("Could not find KakaoTalk main window after opening.")
+            throw ExitCode.failure
+        }
 
         // Find the chat window
         let chatWindow = kakao.windows.first { window in
