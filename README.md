@@ -240,14 +240,14 @@ README 디버깅 가이드도 함께 업데이트해 주세요.
 gh auth login -h github.com
 
 # 배포 태그 생성/푸시
-git tag v0.1.2
-git push origin v0.1.2
+git tag v0.1.3
+git push origin v0.1.3
 ```
 
 필요하면 Actions를 수동 실행할 수 있습니다.
 
 ```bash
-gh workflow run release.yml -f tag=v0.1.2
+gh workflow run release.yml -f tag=v0.1.3
 ```
 
 ## 기타
