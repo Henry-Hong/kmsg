@@ -26,8 +26,8 @@ struct SendCommand: ParsableCommand {
     @Flag(name: .long, help: "Rebuild AX path cache for this run")
     var refreshCache: Bool = false
 
-    @Flag(name: .long, help: "Close chat window after sending message")
-    var closeAfterSend: Bool = false
+    @Flag(name: [.short, .long], help: "Keep auto-opened chat window after sending message")
+    var keepWindow: Bool = false
 
     @Flag(
         name: .long,
@@ -60,8 +60,8 @@ struct SendCommand: ParsableCommand {
             print("Dry run mode - no message will be sent")
             print("Recipient: \(recipient)")
             print("Message: \(message)")
-            if closeAfterSend {
-                print("Option: close window after send")
+            if keepWindow {
+                print("Option: keep auto-opened window")
             }
             return
         }
@@ -86,7 +86,11 @@ struct SendCommand: ParsableCommand {
             }
 
             try sendMessageToWindow(resolution.window, kakao: kakao, runner: runner)
-            closeChatWindowIfNeeded(resolution.window, resolver: chatWindowResolver, runner: runner)
+            closeChatWindowIfNeeded(
+                resolution: resolution,
+                resolver: chatWindowResolver,
+                runner: runner
+            )
         } catch {
             print("Failed to send message: \(error)")
             throw ExitCode.failure
@@ -644,12 +648,24 @@ struct SendCommand: ParsableCommand {
         print("✓ Message sent to '\(recipient)'")
     }
 
-    private func closeChatWindowIfNeeded(_ window: UIElement, resolver: ChatWindowResolver, runner: AXActionRunner) {
-        guard closeAfterSend else { return }
-        if resolver.closeWindow(window) {
+    private func closeChatWindowIfNeeded(
+        resolution: ChatWindowResolution,
+        resolver: ChatWindowResolver,
+        runner: AXActionRunner
+    ) {
+        guard resolution.openedViaSearch else {
+            runner.log("send: keeping existing window (not auto-opened)")
+            return
+        }
+        guard !keepWindow else {
+            runner.log("send: keep-window enabled; skipping auto-close")
+            return
+        }
+
+        if resolver.closeWindow(resolution.window) {
             print("✓ Chat window closed.")
         } else {
-            runner.log("close window: could not verify close")
+            runner.log("send: close window could not be verified")
         }
     }
 

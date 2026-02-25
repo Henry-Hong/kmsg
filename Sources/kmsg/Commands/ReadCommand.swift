@@ -61,6 +61,9 @@ struct ReadCommand: ParsableCommand {
     @Flag(name: .long, help: "Show AX traversal and retry details")
     var traceAX: Bool = false
 
+    @Flag(name: [.short, .long], help: "Keep auto-opened chat window after read")
+    var keepWindow: Bool = false
+
     @Flag(
         name: .long,
         help: ArgumentHelp(
@@ -103,13 +106,17 @@ struct ReadCommand: ParsableCommand {
         let window = resolution.window
         if resolution.openedViaSearch {
             runner.log("read: opening chat via search")
-            runner.log("read: auto-opened window will be closed after read")
+            if keepWindow {
+                runner.log("read: keep-window enabled; auto-opened window will be kept")
+            } else {
+                runner.log("read: auto-opened window will be closed after read")
+            }
         } else {
             runner.log("read: found existing chat window")
         }
 
         defer {
-            if resolution.openedViaSearch {
+            if resolution.openedViaSearch && !keepWindow {
                 let resolvedTitle = window.title ?? ""
                 if !resolvedTitle.isEmpty && !resolvedTitle.localizedCaseInsensitiveContains(chat) {
                     runner.log("read: skipped auto-close because resolved title '\(resolvedTitle)' did not match query")
@@ -118,6 +125,8 @@ struct ReadCommand: ParsableCommand {
                 } else {
                     runner.log("read: failed to close auto-opened chat window")
                 }
+            } else if resolution.openedViaSearch && keepWindow {
+                runner.log("read: auto-opened chat window kept by --keep-window")
             }
         }
 

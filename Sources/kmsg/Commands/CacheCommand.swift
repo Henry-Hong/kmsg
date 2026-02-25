@@ -99,6 +99,9 @@ struct CacheWarmupCommand: ParsableCommand {
     @Flag(name: .long, help: "Show AX traversal and retry details")
     var traceAX: Bool = false
 
+    @Flag(name: [.short, .long], help: "Keep auto-opened chat window after warmup")
+    var keepWindow: Bool = false
+
     func run() throws {
         guard AccessibilityPermission.ensureGranted() else {
             AccessibilityPermission.printInstructions()
@@ -107,6 +110,7 @@ struct CacheWarmupCommand: ParsableCommand {
 
         let runner = AXActionRunner(traceEnabled: traceAX)
         let kakao = try KakaoTalkApp()
+        let windowResolver = ChatWindowResolver(kakao: kakao, runner: runner)
 
         guard let usableWindow = kakao.ensureMainWindow(timeout: 1.2, mode: .fast, trace: { message in
             runner.log(message)
@@ -117,6 +121,7 @@ struct CacheWarmupCommand: ParsableCommand {
         }
 
         let searchRoot = kakao.chatListWindow ?? kakao.mainWindow ?? usableWindow
+        let windowsBeforeWarmup = kakao.windows
         var warmedRecipientWindow: UIElement?
         var warmedSlots: [AXPathSlot] = []
 
@@ -160,6 +165,23 @@ struct CacheWarmupCommand: ParsableCommand {
 
         let status = warmedSlots.map(\.rawValue).joined(separator: ", ")
         print("Warmup complete: \(status.isEmpty ? "no slots warmed" : status)")
+
+        guard let warmedRecipientWindow else {
+            return
+        }
+        if keepWindow {
+            runner.log("warmup: keep-window enabled; skipping auto-close")
+            return
+        }
+        if warmupWindowWasPresent(warmedRecipientWindow, in: windowsBeforeWarmup) {
+            runner.log("warmup: recipient window existed before warmup; keeping it open")
+            return
+        }
+        if windowResolver.closeWindow(warmedRecipientWindow) {
+            runner.log("warmup: auto-opened recipient window closed")
+        } else {
+            runner.log("warmup: failed to close auto-opened recipient window")
+        }
     }
 }
 
@@ -359,6 +381,12 @@ private func warmupInputScore(_ element: UIElement, window: UIElement) -> Double
 
 private func warmupSameElement(_ lhs: UIElement, _ rhs: UIElement) -> Bool {
     CFEqual(lhs.axElement, rhs.axElement)
+}
+
+private func warmupWindowWasPresent(_ window: UIElement, in windows: [UIElement]) -> Bool {
+    windows.contains { existing in
+        warmupSameElement(existing, window)
+    }
 }
 
 private func resolvedURL(_ path: String) -> URL {
