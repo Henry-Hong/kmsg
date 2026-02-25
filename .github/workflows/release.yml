@@ -1,0 +1,77 @@
+name: release
+
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Release tag (e.g. v0.1.0). Optional."
+        required: false
+        type: string
+
+permissions:
+  contents: write
+
+jobs:
+  build-and-release:
+    runs-on: macos-14
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Resolve release tag
+        id: meta
+        shell: bash
+        run: |
+          TAG="${GITHUB_REF_NAME}"
+          if [[ "${GITHUB_EVENT_NAME}" == "workflow_dispatch" && -n "${{ inputs.tag }}" ]]; then
+            TAG="${{ inputs.tag }}"
+          fi
+
+          if [[ -z "$TAG" ]]; then
+            echo "Unable to resolve release tag"
+            exit 1
+          fi
+
+          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+          echo "Resolved tag: $TAG"
+
+      - name: Build universal binary
+        shell: bash
+        run: |
+          set -euo pipefail
+          swift --version
+
+          swift build -c release --arch arm64
+          swift build -c release --arch x86_64
+
+          ARM_BIN_DIR="$(swift build -c release --arch arm64 --show-bin-path)"
+          X86_BIN_DIR="$(swift build -c release --arch x86_64 --show-bin-path)"
+
+          ARM_BIN="$ARM_BIN_DIR/kmsg"
+          X86_BIN="$X86_BIN_DIR/kmsg"
+
+          test -f "$ARM_BIN"
+          test -f "$X86_BIN"
+
+          lipo -create -output kmsg-macos-universal "$ARM_BIN" "$X86_BIN"
+          chmod +x kmsg-macos-universal
+          file kmsg-macos-universal
+          lipo -info kmsg-macos-universal
+
+      - name: Create or update release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ steps.meta.outputs.tag }}
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          if gh release view "$TAG" > /dev/null 2>&1; then
+            gh release upload "$TAG" kmsg-macos-universal --clobber
+          else
+            gh release create "$TAG" kmsg-macos-universal --title "$TAG" --generate-notes --target "$GITHUB_SHA"
+          fi

@@ -74,10 +74,37 @@ swift build -c release
 install -m 755 .build/release/kmsg ~/.local/bin/kmsg
 ```
 
+## 릴리스 배포 (메인테이너)
+
+`v*` 태그를 푸시하면 GitHub Actions가 자동으로 빌드해서
+`kmsg-macos-universal` 파일을 Releases에 업로드합니다.
+
+```bash
+# gh 토큰이 만료됐으면 재로그인
+gh auth login -h github.com
+
+# 릴리스 태그 생성/푸시
+git tag v0.1.0
+git push origin v0.1.0
+```
+
+필요하면 Actions를 수동 실행할 수 있습니다.
+
+```bash
+gh workflow run release.yml -f tag=v0.1.0
+```
+
 ## 참고
 
 - 릴리스 설치는 최신 릴리스 자산 `kmsg-macos-universal`을 사용합니다.
 - 다운로드 실패 시: https://github.com/channprj/kmsg/releases 에서 직접 내려받아 `~/.local/bin/kmsg`로 저장 후 `chmod +x ~/.local/bin/kmsg`.
+
+## Inspiration
+
+This project is strongly inspired by:
+
+- [imsg](https://github.com/steipete/imsg)
+- [openclaw](https://github.com/openclaw/openclaw)
 
 ## 라이선스
 
