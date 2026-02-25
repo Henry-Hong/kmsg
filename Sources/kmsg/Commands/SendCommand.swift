@@ -59,24 +59,20 @@ struct SendCommand: ParsableCommand {
 
         prepareCacheIfNeeded(runner: runner)
         let kakao = try KakaoTalkApp()
+        let chatWindowResolver = ChatWindowResolver(kakao: kakao, runner: runner, useCache: !noCache)
 
         do {
             runner.log("window strategy: focusedWindow -> mainWindow -> windows.first")
-            let usableWindow = try requireUsableWindow(kakao, runner: runner)
             print("Looking for chat with '\(recipient)'...")
-
-            if let existingWindow = findMatchingChatWindow(in: kakao.windows, query: recipient) {
+            let resolution = try chatWindowResolver.resolve(query: recipient)
+            if resolution.openedViaSearch {
+                print("No existing chat window. Opening via search...")
+            } else {
                 print("Found existing chat window.")
-                try sendMessageToWindow(existingWindow, kakao: kakao, runner: runner)
-                closeChatWindowIfNeeded(existingWindow, kakao: kakao, runner: runner)
-                return
             }
 
-            print("No existing chat window. Opening via search...")
-            let searchWindow = selectSearchWindow(kakao: kakao, fallback: usableWindow, runner: runner)
-            let chatWindow = try openChatViaSearch(recipient: recipient, in: searchWindow, kakao: kakao, runner: runner)
-            try sendMessageToWindow(chatWindow, kakao: kakao, runner: runner)
-            closeChatWindowIfNeeded(chatWindow, kakao: kakao, runner: runner)
+            try sendMessageToWindow(resolution.window, kakao: kakao, runner: runner)
+            closeChatWindowIfNeeded(resolution.window, resolver: chatWindowResolver, runner: runner)
         } catch {
             print("Failed to send message: \(error)")
             throw ExitCode.failure
@@ -634,67 +630,12 @@ struct SendCommand: ParsableCommand {
         print("✓ Message sent to '\(recipient)'")
     }
 
-    private func closeChatWindowIfNeeded(_ window: UIElement, kakao: KakaoTalkApp, runner: AXActionRunner) {
+    private func closeChatWindowIfNeeded(_ window: UIElement, resolver: ChatWindowResolver, runner: AXActionRunner) {
         guard closeAfterSend else { return }
-        let closeAction = "AXClose"
-
-        kakao.activate()
-        _ = tryRaiseWindow(window, runner: runner)
-
-        if supportsAction(closeAction, on: window) {
-            do {
-                try window.performAction(closeAction)
-                if waitForWindowClosed(window, kakao: kakao, runner: runner, label: "close via AXClose") {
-                    print("✓ Chat window closed.")
-                    return
-                }
-            } catch {
-                runner.log("close window: AXClose failed (\(error))")
-            }
-        }
-
-        if let closeButton = findCloseButton(in: window) {
-            do {
-                try closeButton.press()
-                if waitForWindowClosed(window, kakao: kakao, runner: runner, label: "close via button") {
-                    print("✓ Chat window closed.")
-                    return
-                }
-            } catch {
-                runner.log("close window: button press failed (\(error))")
-            }
-        }
-
-        runner.log("close window: fallback via cmd+w")
-        runner.pressCommandW()
-        if waitForWindowClosed(window, kakao: kakao, runner: runner, label: "close via cmd+w") {
+        if resolver.closeWindow(window) {
             print("✓ Chat window closed.")
         } else {
             runner.log("close window: could not verify close")
-        }
-    }
-
-    private func findCloseButton(in window: UIElement) -> UIElement? {
-        let buttons = window.findAll(role: kAXButtonRole, limit: 6, maxNodes: 80)
-        if let match = buttons.first(where: { button in
-            let joined = [
-                button.identifier ?? "",
-                button.title ?? "",
-                button.axDescription ?? "",
-            ].joined(separator: " ").lowercased()
-            return joined.contains("close") || joined.contains("닫기")
-        }) {
-            return match
-        }
-
-        return buttons.first
-    }
-
-    private func waitForWindowClosed(_ window: UIElement, kakao: KakaoTalkApp, runner: AXActionRunner, label: String) -> Bool {
-        runner.waitUntil(label: label, timeout: 0.9, pollInterval: 0.06, evaluateAfterTimeout: false) {
-            !kakao.windows.contains { candidate in
-                areSameAXElement(candidate, window)
-            }
         }
     }
 

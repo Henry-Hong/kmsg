@@ -65,6 +65,44 @@ KMSG_AX_TIMEOUT=0.25 kmsg send "본인, 친구, 또는 단톡방 이름" "테스
 kmsg cache warmup --recipient "본인, 친구, 또는 단톡방 이름" --trace-ax
 ```
 
+## 디버깅 가이드 (inspect / trace-ax)
+
+메시지 읽기/보내기가 기대와 다르면 아래 순서로 상태를 수집해 주세요.
+
+```bash
+# 1) 대상 채팅창 구조 확인
+kmsg inspect --window 0 --depth 20
+
+# 2) 읽기 경로/AX 로그 확인
+kmsg read "본인, 친구, 또는 단톡방 이름" --limit 20 --trace-ax
+
+# 3) 보내기 경로/AX 로그 확인
+kmsg send "본인, 친구, 또는 단톡방 이름" "테스트" --trace-ax --dry-run
+```
+
+팁:
+
+- `AXTextArea, value: "..."` 는 실제 메시지 본문 후보입니다.
+- `AXStaticText, value: "5\n00:27"` 같은 값은 보통 카운트/시간 메타 정보입니다.
+- 이슈 보고 시 `inspect` 출력과 `--trace-ax` 출력을 함께 첨부하면 원인 파악이 빨라집니다.
+
+## Coding Agent에게 요청하기
+
+개발을 진행하거나 버그 수정을 원할 때 Coding Agent에게 아래 정보와 함께 요청하면 좋습니다.
+
+1. 실행한 명령어: `kmsg read ... --trace-ax`, `kmsg inspect ...`
+2. 기대 결과: 무엇이 보여야 하는지
+3. 실제 결과: 현재 무엇이 출력되는지
+4. 관련 로그: `inspect` 본문 구간 (`AXRow > AXCell > AXTextArea`) + `trace-ax`
+
+예시 요청:
+
+```text
+kmsg read가 메시지 본문 대신 시간/숫자를 출력합니다.
+inspect 결과를 기준으로 AXRow > AXCell > AXTextArea.value를 우선 추출하도록 수정해 주세요.
+README 디버깅 가이드도 함께 업데이트해 주세요.
+```
+
 ## 소스에서 빌드 (개발자용)
 
 ```bash

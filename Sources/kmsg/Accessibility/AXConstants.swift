@@ -28,5 +28,6 @@ public let kAXTabGroupRole = "AXTabGroup"
 public let kAXSplitGroupRole = "AXSplitGroup"
 public let kAXScrollBarRole = "AXScrollBar"
 public let kAXWebAreaRole = "AXWebArea"
+public let kAXLinkRole = "AXLink"
 
 public let kAXEditableAttribute = "AXEditable"
