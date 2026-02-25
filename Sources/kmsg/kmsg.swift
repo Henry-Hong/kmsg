@@ -22,6 +22,7 @@ struct Kmsg: ParsableCommand {
             ChatsCommand.self,
             SendCommand.self,
             ReadCommand.self,
+            CacheCommand.self,
         ],
         defaultSubcommand: StatusCommand.self
     )

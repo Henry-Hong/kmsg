@@ -14,7 +14,7 @@ struct StatusCommand: ParsableCommand {
         print("kmsg - KakaoTalk CLI Tool\n")
 
         // Check accessibility permission
-        let hasPermission = AccessibilityPermission.isGranted()
+        let hasPermission = AccessibilityPermission.ensureGranted()
         print("Accessibility Permission: \(hasPermission ? "✓ Granted" : "✗ Not Granted")")
 
         if !hasPermission {
@@ -69,6 +69,7 @@ struct StatusCommand: ParsableCommand {
           chats     List chat rooms
           read      Read messages from a chat room
           send      Send a message to a chat room
+          cache     Manage AX path cache
           inspect   Inspect KakaoTalk UI hierarchy (debug)
 
         OPTIONS:
