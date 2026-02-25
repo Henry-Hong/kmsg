@@ -1,6 +1,11 @@
 import AppKit
 import Foundation
 
+public enum WindowRecoveryMode: Sendable {
+    case fast
+    case recovery
+}
+
 /// Represents the KakaoTalk application and provides access to its UI elements
 public final class KakaoTalkApp: Sendable {
     public static let bundleIdentifier = "com.kakao.KakaoTalkMac"
@@ -116,34 +121,59 @@ public final class KakaoTalkApp: Sendable {
     }
 
     /// Ensure a usable KakaoTalk window is available.
-    /// Recovery order: activate + rescan -> activate + rescan -> relaunch + rescan -> open app path + rescan.
+    /// - Note: `fast` mode avoids relaunch/open fallback for low latency.
+    /// Recovery mode order: activate + rescan -> activate + rescan -> relaunch + rescan -> open app path + rescan.
     /// - Parameters:
     ///   - timeout: Maximum time to wait for a usable window
     ///   - trace: Optional trace logger
     /// - Returns: Focused/main/first window if available, otherwise nil
-    public func ensureMainWindow(timeout: TimeInterval = 5.0, trace: ((String) -> Void)? = nil) -> UIElement? {
-        if let window = activateAndWaitForWindow(timeout: min(timeout, 2.0), trace: trace) {
+    public func ensureMainWindow(
+        timeout: TimeInterval = 5.0,
+        mode: WindowRecoveryMode = .recovery,
+        trace: ((String) -> Void)? = nil
+    ) -> UIElement? {
+        func remainingTime(until deadline: Date) -> TimeInterval {
+            max(0, deadline.timeIntervalSinceNow)
+        }
+
+        let deadline = Date().addingTimeInterval(max(timeout, 0.1))
+        let firstProbe = min(mode == .fast ? 0.45 : 0.8, remainingTime(until: deadline))
+        if firstProbe > 0, let window = activateAndWaitForWindow(timeout: firstProbe, trace: trace) {
             return window
         }
 
         trace?("No usable window after activation; retrying activation and rescan")
         activate()
-        if let window = waitForUsableWindow(timeout: min(timeout, 2.0), trace: trace) {
+        let secondProbe = min(mode == .fast ? 0.35 : 0.6, remainingTime(until: deadline))
+        if secondProbe > 0, let window = waitForUsableWindow(timeout: secondProbe, trace: trace) {
             return window
         }
 
+        guard mode == .recovery else {
+            trace?("No usable window in fast mode")
+            return currentUsableWindow()
+        }
+
         trace?("No usable window after activation-rescan; attempting relaunch")
-        _ = Self.launch(timeout: timeout)
+        let relaunchBudget = min(1.2, remainingTime(until: deadline))
+        if relaunchBudget > 0 {
+            _ = Self.launch(timeout: relaunchBudget)
+        }
         activate()
 
-        if let window = waitForUsableWindow(timeout: timeout, trace: trace) {
+        let relaunchProbe = min(1.0, remainingTime(until: deadline))
+        if relaunchProbe > 0, let window = waitForUsableWindow(timeout: relaunchProbe, trace: trace) {
             return window
         }
 
         trace?("No usable window after relaunch; forcing open /Applications/KakaoTalk.app")
-        _ = Self.launchViaOpenCommand(timeout: min(timeout, 2.0))
+        let openBudget = min(1.0, remainingTime(until: deadline))
+        if openBudget > 0 {
+            _ = Self.launchViaOpenCommand(timeout: openBudget)
+        }
         activate()
-        if let window = waitForUsableWindow(timeout: min(timeout, 2.0), trace: trace) {
+        let openProbe = min(0.8, remainingTime(until: deadline))
+        if openProbe > 0, let window = waitForUsableWindow(timeout: openProbe, trace: trace) {
             return window
         }
 

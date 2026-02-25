@@ -151,6 +151,7 @@ struct AXActionRunner {
         on element: UIElement?,
         label: String,
         attempts: Int = 2,
+        reflectionTimeout: TimeInterval = 0.45,
         retryDelay: TimeInterval = 0.12
     ) -> Bool {
         for attempt in 1...max(attempts, 1) {
@@ -162,7 +163,7 @@ struct AXActionRunner {
                 return true
             }
 
-            let reflected = waitUntil(label: "\(label) Enter reflected", timeout: 0.45, condition: {
+            let reflected = waitUntil(label: "\(label) Enter reflected", timeout: reflectionTimeout, condition: {
                 let after = element.stringValue ?? ""
                 return didEnterEffect(before: before, after: after)
             })
@@ -190,6 +191,10 @@ struct AXActionRunner {
         pressKey(code: 125)
     }
 
+    func pressCommandW() {
+        pressKey(code: 13, flags: .maskCommand) // W
+    }
+
     private func typeText(_ text: String, perCharacterDelay: TimeInterval) {
         let source = CGEventSource(stateID: .hidSystemState)
 
@@ -207,12 +212,14 @@ struct AXActionRunner {
         }
     }
 
-    private func pressKey(code: CGKeyCode) {
+    private func pressKey(code: CGKeyCode, flags: CGEventFlags = []) {
         let source = CGEventSource(stateID: .hidSystemState)
         if let down = CGEvent(keyboardEventSource: source, virtualKey: code, keyDown: true) {
+            down.flags = flags
             down.post(tap: .cghidEventTap)
         }
         if let up = CGEvent(keyboardEventSource: source, virtualKey: code, keyDown: false) {
+            up.flags = flags
             up.post(tap: .cghidEventTap)
         }
     }

@@ -11,14 +11,38 @@ public final class UIElement: @unchecked Sendable {
 
     // MARK: - Factory Methods
 
+    private static let defaultMessagingTimeout: TimeInterval = {
+        let env = ProcessInfo.processInfo.environment["KMSG_AX_TIMEOUT"]?
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        if let env, let parsed = Double(env), parsed >= 0.05, parsed <= 5.0 {
+            return parsed
+        }
+        return 0.25
+    }()
+
+    private static let configureMessagingTimeoutOnce: Void = {
+        let timeout = defaultMessagingTimeout
+        guard timeout > 0 else { return }
+        let system = AXUIElementCreateSystemWide()
+        _ = AXUIElementSetMessagingTimeout(system, Float(timeout))
+    }()
+
+    private static func configureMessagingTimeoutIfNeeded() {
+        _ = configureMessagingTimeoutOnce
+    }
+
     /// Get the system-wide UI element
     public static func systemWide() -> UIElement {
-        UIElement(AXUIElementCreateSystemWide())
+        configureMessagingTimeoutIfNeeded()
+        return UIElement(AXUIElementCreateSystemWide())
     }
 
     /// Create a UI element for an application with the given PID
     public static func application(pid: pid_t) -> UIElement {
-        UIElement(AXUIElementCreateApplication(pid))
+        configureMessagingTimeoutIfNeeded()
+        let app = UIElement(AXUIElementCreateApplication(pid))
+        _ = AXUIElementSetMessagingTimeout(app.axElement, Float(defaultMessagingTimeout))
+        return app
     }
 
     // MARK: - Attributes
@@ -218,9 +242,11 @@ public final class UIElement: @unchecked Sendable {
     public func findAll(where predicate: (UIElement) -> Bool) -> [UIElement] {
         var results: [UIElement] = []
         var queue = children
+        var index = 0
 
-        while !queue.isEmpty {
-            let current = queue.removeFirst()
+        while index < queue.count {
+            let current = queue[index]
+            index += 1
             if predicate(current) {
                 results.append(current)
             }
@@ -231,16 +257,22 @@ public final class UIElement: @unchecked Sendable {
     }
 
     /// Find descendants matching a predicate with early termination (breadth-first search)
-    public func findAll(where predicate: (UIElement) -> Bool, limit: Int) -> [UIElement] {
+    public func findAll(where predicate: (UIElement) -> Bool, limit: Int, maxNodes: Int? = nil) -> [UIElement] {
         var results: [UIElement] = []
         var queue = children
+        var index = 0
+        var visited = 0
+        let nodeBudget = maxNodes ?? .max
 
-        while !queue.isEmpty && results.count < limit {
-            let current = queue.removeFirst()
+        while index < queue.count && results.count < limit && visited < nodeBudget {
+            let current = queue[index]
+            index += 1
+            visited += 1
             if predicate(current) {
                 results.append(current)
                 if results.count >= limit { break }
             }
+            if visited >= nodeBudget { break }
             queue.append(contentsOf: current.children)
         }
 
@@ -250,9 +282,11 @@ public final class UIElement: @unchecked Sendable {
     /// Find first descendant matching a predicate (breadth-first search)
     public func findFirst(where predicate: (UIElement) -> Bool) -> UIElement? {
         var queue = children
+        var index = 0
 
-        while !queue.isEmpty {
-            let current = queue.removeFirst()
+        while index < queue.count {
+            let current = queue[index]
+            index += 1
             if predicate(current) {
                 return current
             }
@@ -268,8 +302,8 @@ public final class UIElement: @unchecked Sendable {
     }
 
     /// Find elements by role with limit
-    public func findAll(role: String, limit: Int) -> [UIElement] {
-        findAll(where: { $0.role == role }, limit: limit)
+    public func findAll(role: String, limit: Int, maxNodes: Int? = nil) -> [UIElement] {
+        findAll(where: { $0.role == role }, limit: limit, maxNodes: maxNodes)
     }
 
     /// Find element by identifier

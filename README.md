@@ -91,11 +91,18 @@ kmsg chats --trace-ax   # AX 탐색/재시도 추적 로그
 kmsg send "친구이름" "안녕하세요!"
 kmsg send "그룹채팅방" "메시지" --dry-run   # 테스트 (실제 전송 안함)
 kmsg send "친구이름" "안녕하세요!" --trace-ax # 입력/전송 단계 추적 로그
+kmsg send "친구이름" "안녕하세요!" --close-after-send # 전송 후 채팅창 닫기
 kmsg send "친구이름" "안녕하세요!" --refresh-cache # AX 경로 캐시 재생성
 kmsg send "친구이름" "안녕하세요!" --no-cache      # 캐시 없이 1회 실행
 ```
 
 `--trace-ax` 로그에는 윈도우 복구 전략(`focusedWindow -> mainWindow -> windows.first`)과 재시도 경로가 표시됩니다.
+
+성능 튜닝이 필요하면 AX 호출 타임아웃(초)을 환경변수로 조정할 수 있습니다.
+
+```bash
+KMSG_AX_TIMEOUT=0.25 kmsg send "친구이름" "메시지"
+```
 
 ### AX 캐시 관리
 
@@ -104,6 +111,7 @@ kmsg send "친구이름" "안녕하세요!" --no-cache      # 캐시 없이 1회
 ```bash
 kmsg cache status               # 캐시 상태 확인
 kmsg cache clear                # 캐시 삭제
+kmsg cache warmup --recipient "송요섭"  # 첫 전송 전에 경로 워밍업
 kmsg cache export ./ax-cache.json
 kmsg cache import ./ax-cache.json
 ```

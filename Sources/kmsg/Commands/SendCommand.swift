@@ -26,6 +26,9 @@ struct SendCommand: ParsableCommand {
     @Flag(name: .long, help: "Rebuild AX path cache for this run")
     var refreshCache: Bool = false
 
+    @Flag(name: .long, help: "Close chat window after sending message")
+    var closeAfterSend: Bool = false
+
     private enum SendFailureCode: String {
         case focusFail = "FOCUS_FAIL"
         case inputNotReflected = "INPUT_NOT_REFLECTED"
@@ -48,6 +51,9 @@ struct SendCommand: ParsableCommand {
             print("Dry run mode - no message will be sent")
             print("Recipient: \(recipient)")
             print("Message: \(message)")
+            if closeAfterSend {
+                print("Option: close window after send")
+            }
             return
         }
 
@@ -62,6 +68,7 @@ struct SendCommand: ParsableCommand {
             if let existingWindow = findMatchingChatWindow(in: kakao.windows, query: recipient) {
                 print("Found existing chat window.")
                 try sendMessageToWindow(existingWindow, kakao: kakao, runner: runner)
+                closeChatWindowIfNeeded(existingWindow, kakao: kakao, runner: runner)
                 return
             }
 
@@ -69,6 +76,7 @@ struct SendCommand: ParsableCommand {
             let searchWindow = selectSearchWindow(kakao: kakao, fallback: usableWindow, runner: runner)
             let chatWindow = try openChatViaSearch(recipient: recipient, in: searchWindow, kakao: kakao, runner: runner)
             try sendMessageToWindow(chatWindow, kakao: kakao, runner: runner)
+            closeChatWindowIfNeeded(chatWindow, kakao: kakao, runner: runner)
         } catch {
             print("Failed to send message: \(error)")
             throw ExitCode.failure
@@ -76,7 +84,14 @@ struct SendCommand: ParsableCommand {
     }
 
     private func requireUsableWindow(_ kakao: KakaoTalkApp, runner: AXActionRunner) throws -> UIElement {
-        if let usableWindow = kakao.ensureMainWindow(timeout: 5.0, trace: { message in
+        if let usableWindow = kakao.ensureMainWindow(timeout: 1.2, mode: .fast, trace: { message in
+            runner.log(message)
+        }) {
+            return usableWindow
+        }
+
+        runner.log("window fast path failed; escalating to recovery mode")
+        if let usableWindow = kakao.ensureMainWindow(timeout: 3.0, mode: .recovery, trace: { message in
             runner.log(message)
         }) {
             return usableWindow
@@ -105,14 +120,14 @@ struct SendCommand: ParsableCommand {
             throw KakaoTalkError.elementNotFound("[\(SendFailureCode.searchMiss.rawValue)] Search field not found")
         }
 
-        guard runner.focusWithVerification(searchField, label: "search field") else {
+        guard runner.focusWithVerification(searchField, label: "search field", attempts: 1) else {
             throw KakaoTalkError.actionFailed("[\(SendFailureCode.focusFail.rawValue)] Could not focus search field")
         }
 
         _ = runner.setTextWithVerification("", on: searchField, label: "search field clear", attempts: 1)
 
         let searchInputReady =
-            runner.setTextWithVerification(recipient, on: searchField, label: "search field input") ||
+            runner.setTextWithVerification(recipient, on: searchField, label: "search field input", attempts: 1) ||
             runner.typeTextWithVerification(recipient, on: searchField, label: "search field input", attempts: 2)
 
         guard searchInputReady else {
@@ -195,24 +210,7 @@ struct SendCommand: ParsableCommand {
                 return true
             }
         }
-
-        var neighbors: [UIElement] = []
-        if let parent = result.parent {
-            neighbors.append(parent)
-            if let grandParent = parent.parent {
-                neighbors.append(grandParent)
-            }
-        }
-        neighbors.append(contentsOf: result.children.prefix(8))
-
-        for (index, neighbor) in neighbors.enumerated() {
-            if tryActivateSearchResult(neighbor, label: "neighbor[\(index)]", runner: runner) {
-                didTriggerAction = true
-                if runner.waitUntil(label: "search open confirm", timeout: 0.25, pollInterval: 0.05, evaluateAfterTimeout: false, condition: opened) {
-                    return true
-                }
-            }
-        }
+        runner.log("search: direct activate miss; skipping heavy neighbor scan for speed")
 
         let selected = trySelectSearchResult(result, label: "result", runner: runner)
         if !selected, let parent = result.parent {
@@ -250,7 +248,7 @@ struct SendCommand: ParsableCommand {
             runner.log("search: Down+Enter skipped (search field focus unavailable)")
         }
 
-        return opened() || didTriggerAction
+        return didTriggerAction
     }
 
     private func tryActivateSearchResult(_ element: UIElement, label: String, runner: AXActionRunner) -> Bool {
@@ -371,7 +369,7 @@ struct SendCommand: ParsableCommand {
             return field
         }
 
-        let searchButtons = rootWindow.findAll(role: kAXButtonRole, limit: 24).filter { button in
+        let searchButtons = rootWindow.findAll(role: kAXButtonRole, limit: 24, maxNodes: 220).filter { button in
             let title = (button.title ?? "").lowercased()
             let description = (button.axDescription ?? "").lowercased()
             let identifier = (button.identifier ?? "").lowercased()
@@ -408,19 +406,19 @@ struct SendCommand: ParsableCommand {
 
     private func discoverSearchFieldCandidates(in rootWindow: UIElement, kakao: KakaoTalkApp) -> [UIElement] {
         var fields: [UIElement] = []
-        fields.append(contentsOf: rootWindow.findAll(role: kAXTextFieldRole, limit: 8))
+        fields.append(contentsOf: rootWindow.findAll(role: kAXTextFieldRole, limit: 8, maxNodes: 140))
         if let focusedWindow = kakao.focusedWindow {
-            fields.append(contentsOf: focusedWindow.findAll(role: kAXTextFieldRole, limit: 8))
+            fields.append(contentsOf: focusedWindow.findAll(role: kAXTextFieldRole, limit: 8, maxNodes: 140))
         }
         if let mainWindow = kakao.mainWindow {
-            fields.append(contentsOf: mainWindow.findAll(role: kAXTextFieldRole, limit: 8))
+            fields.append(contentsOf: mainWindow.findAll(role: kAXTextFieldRole, limit: 8, maxNodes: 140))
         }
         return fields.filter { $0.isEnabled }
     }
 
     private func waitForMatchingSearchResults(recipient: String, rootWindow: UIElement, kakao: KakaoTalkApp, runner: AXActionRunner) -> [UIElement] {
         var matches: [UIElement] = []
-        let found = runner.waitUntil(label: "search results", timeout: 0.9, pollInterval: 0.06) {
+        let found = runner.waitUntil(label: "search results", timeout: 0.4, pollInterval: 0.05) {
             matches = findMatchingSearchResults(recipient: recipient, rootWindow: rootWindow, kakao: kakao)
             return !matches.isEmpty
         }
@@ -443,7 +441,7 @@ struct SendCommand: ParsableCommand {
 
         var results: [UIElement] = []
         for root in roots {
-            let candidates = (root.findAll(role: kAXRowRole, limit: 40) + root.findAll(role: kAXCellRole, limit: 40)).filter { element in
+            let candidates = (root.findAll(role: kAXRowRole, limit: 24, maxNodes: 260) + root.findAll(role: kAXCellRole, limit: 24, maxNodes: 260)).filter { element in
                 containsText(recipient, in: element)
             }
             results.append(contentsOf: candidates)
@@ -461,7 +459,7 @@ struct SendCommand: ParsableCommand {
         runner: AXActionRunner
     ) -> UIElement? {
         var resolved: UIElement?
-        _ = runner.waitUntil(label: "chat context ready", timeout: 1.2, pollInterval: 0.06, evaluateAfterTimeout: false) {
+        _ = runner.waitUntil(label: "chat context ready", timeout: 0.8, pollInterval: 0.05, evaluateAfterTimeout: false) {
             resolved = resolveOpenedChatWindowFast(recipient: recipient, kakao: kakao, fallbackWindow: fallbackWindow)
             return resolved != nil
         }
@@ -555,8 +553,14 @@ struct SendCommand: ParsableCommand {
             return false
         }
 
+        // If a text field sits outside the target chat window bounds, treat it as non-chat input.
+        // This blocks accidental selection of sidebar/global search fields.
+        if !isElementLikelyInsideWindow(elementFrame: elementFrame, windowFrame: windowFrame) {
+            return true
+        }
+
         let relativeY = (elementFrame.midY - windowFrame.minY) / windowFrame.height
-        return relativeY < 0.45
+        return relativeY < 0.5
     }
 
     private func pickSearchField(from fields: [UIElement]) -> UIElement? {
@@ -577,7 +581,7 @@ struct SendCommand: ParsableCommand {
         if let value = element.stringValue, value.localizedCaseInsensitiveContains(text) {
             return true
         }
-        let staticTexts = element.findAll(role: kAXStaticTextRole, limit: 5)
+        let staticTexts = element.findAll(role: kAXStaticTextRole, limit: 5, maxNodes: 48)
         return staticTexts.contains { item in
             (item.stringValue ?? "").localizedCaseInsensitiveContains(text)
         }
@@ -593,24 +597,105 @@ struct SendCommand: ParsableCommand {
             return
         }
 
-        guard runner.focusWithVerification(input, label: "message input") else {
+        guard runner.focusWithVerification(input, label: "message input", attempts: 1) else {
             throw KakaoTalkError.actionFailed("[\(SendFailureCode.focusFail.rawValue)] Could not focus message input")
         }
 
         let inputReady =
-            runner.setTextWithVerification(message, on: input, label: "message input") ||
+            runner.setTextWithVerification(message, on: input, label: "message input", attempts: 1) ||
             runner.typeTextWithVerification(message, on: input, label: "message input", attempts: 2)
         guard inputReady else {
             throw KakaoTalkError.actionFailed("[\(SendFailureCode.inputNotReflected.rawValue)] Message input was not reflected")
         }
 
-        let sendSucceeded = runner.pressEnterWithVerification(on: input, label: "message input")
+        var sendSucceeded = runner.pressEnterWithVerification(
+            on: input,
+            label: "message input",
+            attempts: 1,
+            reflectionTimeout: 0.24,
+            retryDelay: 0.06
+        )
+        if !sendSucceeded {
+            runner.log("message input: quick retry after enter miss")
+            _ = runner.focusWithVerification(input, label: "message input retry", attempts: 1)
+            sendSucceeded = runner.pressEnterWithVerification(
+                on: input,
+                label: "message input retry",
+                attempts: 1,
+                reflectionTimeout: 0.34,
+                retryDelay: 0.06
+            )
+        }
         guard sendSucceeded else {
             invalidateCachedSlots([.messageInput], runner: runner)
             throw KakaoTalkError.actionFailed("[\(SendFailureCode.enterNotEffective.rawValue)] Enter key had no visible effect")
         }
 
         print("✓ Message sent to '\(recipient)'")
+    }
+
+    private func closeChatWindowIfNeeded(_ window: UIElement, kakao: KakaoTalkApp, runner: AXActionRunner) {
+        guard closeAfterSend else { return }
+        let closeAction = "AXClose"
+
+        kakao.activate()
+        _ = tryRaiseWindow(window, runner: runner)
+
+        if supportsAction(closeAction, on: window) {
+            do {
+                try window.performAction(closeAction)
+                if waitForWindowClosed(window, kakao: kakao, runner: runner, label: "close via AXClose") {
+                    print("✓ Chat window closed.")
+                    return
+                }
+            } catch {
+                runner.log("close window: AXClose failed (\(error))")
+            }
+        }
+
+        if let closeButton = findCloseButton(in: window) {
+            do {
+                try closeButton.press()
+                if waitForWindowClosed(window, kakao: kakao, runner: runner, label: "close via button") {
+                    print("✓ Chat window closed.")
+                    return
+                }
+            } catch {
+                runner.log("close window: button press failed (\(error))")
+            }
+        }
+
+        runner.log("close window: fallback via cmd+w")
+        runner.pressCommandW()
+        if waitForWindowClosed(window, kakao: kakao, runner: runner, label: "close via cmd+w") {
+            print("✓ Chat window closed.")
+        } else {
+            runner.log("close window: could not verify close")
+        }
+    }
+
+    private func findCloseButton(in window: UIElement) -> UIElement? {
+        let buttons = window.findAll(role: kAXButtonRole, limit: 6, maxNodes: 80)
+        if let match = buttons.first(where: { button in
+            let joined = [
+                button.identifier ?? "",
+                button.title ?? "",
+                button.axDescription ?? "",
+            ].joined(separator: " ").lowercased()
+            return joined.contains("close") || joined.contains("닫기")
+        }) {
+            return match
+        }
+
+        return buttons.first
+    }
+
+    private func waitForWindowClosed(_ window: UIElement, kakao: KakaoTalkApp, runner: AXActionRunner, label: String) -> Bool {
+        runner.waitUntil(label: label, timeout: 0.9, pollInterval: 0.06, evaluateAfterTimeout: false) {
+            !kakao.windows.contains { candidate in
+                areSameAXElement(candidate, window)
+            }
+        }
     }
 
     private func resolveMessageInputField(chatWindow: UIElement, kakao: KakaoTalkApp, runner: AXActionRunner) -> UIElement? {
@@ -625,17 +710,33 @@ struct SendCommand: ParsableCommand {
             return cachedInput
         }
 
+        if let focusedElement = kakao.applicationElement.focusedUIElement {
+            let focusedCandidates = collectFocusedElementLineageCandidates(focusedElement)
+            runner.log("message input fast path: focused lineage candidates=\(focusedCandidates.count)")
+            if let input = pickMessageInputField(from: focusedCandidates, in: chatWindow) {
+                runner.log("message input fast path resolved: role='\(input.role ?? "unknown")' title='\(input.title ?? "")'")
+                rememberCachedElement(slot: .messageInput, root: chatWindow, element: input, runner: runner)
+                return input
+            }
+        }
+
         for attempt in 1...2 {
             var candidates: [UIElement] = []
 
-            let windowCandidates = collectMessageInputCandidates(from: chatWindow)
-            candidates.append(contentsOf: windowCandidates)
-            runner.log("message input search attempt \(attempt): chatWindow candidates=\(windowCandidates.count)")
-
             if let focusedWindow = kakao.focusedWindow {
-                let focusedWindowCandidates = collectMessageInputCandidates(from: focusedWindow)
+                let focusedWindowCandidates = collectMessageInputCandidates(from: focusedWindow, limit: attempt == 1 ? 36 : 60)
                 candidates.append(contentsOf: focusedWindowCandidates)
                 runner.log("message input search attempt \(attempt): focusedWindow candidates=\(focusedWindowCandidates.count)")
+
+                if !areSameAXElement(focusedWindow, chatWindow) {
+                    let chatWindowCandidates = collectMessageInputCandidates(from: chatWindow, limit: attempt == 1 ? 36 : 60)
+                    candidates.append(contentsOf: chatWindowCandidates)
+                    runner.log("message input search attempt \(attempt): chatWindow candidates=\(chatWindowCandidates.count)")
+                }
+            } else {
+                let chatWindowCandidates = collectMessageInputCandidates(from: chatWindow, limit: attempt == 1 ? 36 : 60)
+                candidates.append(contentsOf: chatWindowCandidates)
+                runner.log("message input search attempt \(attempt): chatWindow candidates=\(chatWindowCandidates.count)")
             }
 
             if let focusedElement = kakao.applicationElement.focusedUIElement {
@@ -645,12 +746,12 @@ struct SendCommand: ParsableCommand {
             }
 
             if attempt > 1 {
-                let appCandidates = collectMessageInputCandidates(from: kakao.applicationElement, limit: 120)
+                let appCandidates = collectMessageInputCandidates(from: kakao.applicationElement, limit: 60)
                 candidates.append(contentsOf: appCandidates)
                 runner.log("message input search attempt \(attempt): app-wide candidates=\(appCandidates.count)")
             }
 
-            if let input = pickMessageInputField(from: candidates, in: chatWindow) {
+            if let input = pickMessageInputField(from: deduplicateCandidates(candidates), in: chatWindow) {
                 runner.log("message input resolved on attempt \(attempt): role='\(input.role ?? "unknown")' title='\(input.title ?? "")'")
                 rememberCachedElement(slot: .messageInput, root: chatWindow, element: input, runner: runner)
                 return input
@@ -659,23 +760,24 @@ struct SendCommand: ParsableCommand {
             runner.log("message input search attempt \(attempt): no candidate resolved; reactivating chat window")
             kakao.activate()
             _ = runner.focusWithVerification(chatWindow, label: "chat window", attempts: 1)
-            Thread.sleep(forTimeInterval: 0.08)
+            Thread.sleep(forTimeInterval: 0.05)
         }
 
-        let appCandidates = collectMessageInputCandidates(from: kakao.applicationElement, limit: 220)
+        let appCandidates = collectMessageInputCandidates(from: kakao.applicationElement, limit: 90)
         runner.log("message input final fallback: app-wide candidates=\(appCandidates.count)")
-        if let input = pickMessageInputField(from: appCandidates, in: chatWindow) {
+        if let input = pickMessageInputField(from: deduplicateCandidates(appCandidates), in: chatWindow) {
             rememberCachedElement(slot: .messageInput, root: chatWindow, element: input, runner: runner)
             return input
         }
         return nil
     }
 
-    private func collectMessageInputCandidates(from root: UIElement, limit: Int = 100) -> [UIElement] {
+    private func collectMessageInputCandidates(from root: UIElement, limit: Int = 80) -> [UIElement] {
+        let nodeBudget = max(200, limit * 4)
         let roleCandidates = root.findAll(where: { element in
             guard element.isEnabled else { return false }
             return element.role == kAXTextAreaRole || element.role == kAXTextFieldRole
-        }, limit: limit)
+        }, limit: limit, maxNodes: nodeBudget)
 
         let editableCandidates = root.findAll(where: { element in
             guard element.isEnabled else { return false }
@@ -683,7 +785,7 @@ struct SendCommand: ParsableCommand {
             guard editable else { return false }
             let role = element.role ?? ""
             return role != kAXStaticTextRole && role != kAXImageRole
-        }, limit: limit)
+        }, limit: limit, maxNodes: nodeBudget)
 
         return roleCandidates + editableCandidates
     }
@@ -693,18 +795,34 @@ struct SendCommand: ParsableCommand {
         var cursor: UIElement? = focusedElement.parent
         var hops = 0
 
-        while let element = cursor, hops < 5 {
+        while let element = cursor, hops < 4 {
             candidates.append(element)
             let textDescendants = element.findAll(where: { node in
                 guard node.isEnabled else { return false }
                 return node.role == kAXTextAreaRole || node.role == kAXTextFieldRole
-            }, limit: 20)
+            }, limit: 8, maxNodes: 48)
             candidates.append(contentsOf: textDescendants)
             cursor = element.parent
             hops += 1
         }
 
         return candidates
+    }
+
+    private func deduplicateCandidates(_ candidates: [UIElement]) -> [UIElement] {
+        var unique: [UIElement] = []
+        unique.reserveCapacity(candidates.count)
+        for candidate in candidates {
+            if unique.contains(where: { areSameAXElement($0, candidate) }) {
+                continue
+            }
+            unique.append(candidate)
+        }
+        return unique
+    }
+
+    private func areSameAXElement(_ lhs: UIElement, _ rhs: UIElement) -> Bool {
+        CFEqual(lhs.axElement, rhs.axElement)
     }
 
     private func forceTypeIntoChatWindow(chatWindow: UIElement, kakao: KakaoTalkApp, runner: AXActionRunner) -> Bool {
@@ -781,8 +899,24 @@ struct SendCommand: ParsableCommand {
         } else {
             topPenalty = 0.0
         }
+        let locationScore: Double
+        if let windowFrame = window.frame, let elementFrame = element.frame {
+            if isElementLikelyInsideWindow(elementFrame: elementFrame, windowFrame: windowFrame) {
+                let relativeY = (elementFrame.midY - windowFrame.minY) / max(windowFrame.height, 1.0)
+                locationScore = relativeY > 0.55 ? 1_500.0 : 0.0
+            } else {
+                locationScore = -6_000.0
+            }
+        } else {
+            locationScore = 0.0
+        }
         let sizeScore = Double(element.size?.height ?? 0)
         let focusScore = element.isFocused ? 2_000.0 : 0.0
-        return roleScore + yScore + sizeScore + focusScore - topPenalty
+        return roleScore + yScore + sizeScore + focusScore + locationScore - topPenalty
+    }
+
+    private func isElementLikelyInsideWindow(elementFrame: CGRect, windowFrame: CGRect) -> Bool {
+        let expandedWindow = windowFrame.insetBy(dx: -24, dy: -24)
+        return expandedWindow.intersects(elementFrame)
     }
 }

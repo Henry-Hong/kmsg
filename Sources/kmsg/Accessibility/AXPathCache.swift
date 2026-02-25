@@ -42,7 +42,8 @@ struct AXPathCacheStatus {
 
 final class AXPathCacheStore: @unchecked Sendable {
     static let shared = AXPathCacheStore()
-    static let schemaVersion = 1
+    static let schemaVersion = 2
+    static let cacheEntryTTL: TimeInterval = 60 * 60 * 24 * 7
 
     let fileURL: URL
 
@@ -149,6 +150,17 @@ final class AXPathCacheStore: @unchecked Sendable {
             $0.slot == slot && $0.rootFingerprint == rootFingerprint
         }) else {
             trace?("cache: miss slot=\(slot.rawValue)")
+            return nil
+        }
+
+        if Date().timeIntervalSince(entry.updatedAt) > Self.cacheEntryTTL {
+            trace?("cache: expired slot=\(slot.rawValue), removing")
+            document.entries.removeAll {
+                $0.slot == slot && $0.rootFingerprint == rootFingerprint
+            }
+            document.updatedAt = Date()
+            cachedDocument = document
+            try? persist(document)
             return nil
         }
 
@@ -281,9 +293,8 @@ enum AXPathResolver {
     static func rootFingerprint(of root: UIElement) -> String {
         let role = root.role ?? "unknown-role"
         let identifier = root.identifier ?? ""
-        let size = root.size.map { "\(Int($0.width))x\(Int($0.height))" } ?? "unknown-size"
-        let childRoles = root.children.prefix(8).map { $0.role ?? "unknown" }.joined(separator: ",")
-        return [role, identifier, size, childRoles].joined(separator: "|")
+        let size = root.size.map(sizeBucket) ?? "unknown-size"
+        return [role, identifier, size].joined(separator: "|")
     }
 
     static func buildPath(from root: UIElement, to target: UIElement) -> AXElementPath? {
@@ -392,6 +403,12 @@ enum AXPathResolver {
     private static func nonEmpty(_ value: String?) -> String? {
         guard let value, !value.isEmpty else { return nil }
         return value
+    }
+
+    private static func sizeBucket(_ size: CGSize) -> String {
+        let widthBucket = Int(size.width / 40.0)
+        let heightBucket = Int(size.height / 40.0)
+        return "\(widthBucket)x\(heightBucket)"
     }
 
     private static func isSameElement(_ lhs: UIElement, _ rhs: UIElement) -> Bool {
