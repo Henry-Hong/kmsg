@@ -6,6 +6,10 @@
 
 `kmsg` 는 macOS에서 카카오톡 메시지를 CLI 로 읽고 보내는 도구입니다. 단순한 수동 CLI 를 넘어, AI Agent 또는 Hook 이벤트 등의 자동화 파이프라인에 연결하기 쉽도록 구현했습니다.
 
+## Demo
+
+> WIP
+
 ## 빠른 시작
 
 요구사항:
@@ -107,6 +111,8 @@ python tools/kmsg-mcp.py
 ```
 
 ### OpenClaw 설정 예시
+
+MCP 서버를 띄웠다면 아래와 같이 JSON 설정값을 주면서 MCP 연동을 해달라고 하면 됩니다. 정말 간단하죠? 그래도 args 의 path 는 수정하셔야 합니다.
 
 ```json
 {
