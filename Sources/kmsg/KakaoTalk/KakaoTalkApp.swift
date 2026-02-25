@@ -54,7 +54,34 @@ public final class KakaoTalkApp: Sendable {
         }
 
         _ = semaphore.wait(timeout: .now() + timeout)
+        if let app = waitForRunningApplication(timeout: timeout) {
+            return app
+        }
 
+        return launchViaOpenCommand(timeout: timeout)
+    }
+
+    @discardableResult
+    private static func launchViaOpenCommand(timeout: TimeInterval) -> NSRunningApplication? {
+        let appPath = "/Applications/KakaoTalk.app"
+        guard FileManager.default.fileExists(atPath: appPath) else {
+            return runningApplication
+        }
+
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: "/usr/bin/open")
+        process.arguments = [appPath]
+        do {
+            try process.run()
+            process.waitUntilExit()
+        } catch {
+            return runningApplication
+        }
+
+        return waitForRunningApplication(timeout: timeout)
+    }
+
+    private static func waitForRunningApplication(timeout: TimeInterval) -> NSRunningApplication? {
         let startTime = Date()
         while Date().timeIntervalSince(startTime) < timeout {
             if let app = runningApplication {
@@ -62,7 +89,6 @@ public final class KakaoTalkApp: Sendable {
             }
             Thread.sleep(forTimeInterval: 0.1)
         }
-
         return runningApplication
     }
 
@@ -79,21 +105,50 @@ public final class KakaoTalkApp: Sendable {
         app.activate(options: [.activateIgnoringOtherApps])
     }
 
-    /// Activate KakaoTalk and wait for the main window to be available
-    /// - Parameter timeout: Maximum time to wait for the window (default: 2 seconds)
-    /// - Returns: The main window if available within the timeout, nil otherwise
-    public func activateAndWaitForWindow(timeout: TimeInterval = 2.0) -> UIElement? {
+    /// Activate KakaoTalk and wait for a usable window to be available
+    /// - Parameter timeout: Maximum time to wait for a usable window (default: 2 seconds)
+    /// - Parameter trace: Optional trace logger
+    /// - Returns: The focused/main/first window if available within the timeout, nil otherwise
+    public func activateAndWaitForWindow(timeout: TimeInterval = 2.0, trace: ((String) -> Void)? = nil) -> UIElement? {
         activate()
 
-        let startTime = Date()
-        while Date().timeIntervalSince(startTime) < timeout {
-            if let window = mainWindow {
-                return window
-            }
-            Thread.sleep(forTimeInterval: 0.1)
+        return waitForUsableWindow(timeout: timeout, trace: trace)
+    }
+
+    /// Ensure a usable KakaoTalk window is available.
+    /// Recovery order: activate + rescan -> activate + rescan -> relaunch + rescan -> open app path + rescan.
+    /// - Parameters:
+    ///   - timeout: Maximum time to wait for a usable window
+    ///   - trace: Optional trace logger
+    /// - Returns: Focused/main/first window if available, otherwise nil
+    public func ensureMainWindow(timeout: TimeInterval = 5.0, trace: ((String) -> Void)? = nil) -> UIElement? {
+        if let window = activateAndWaitForWindow(timeout: min(timeout, 2.0), trace: trace) {
+            return window
         }
 
-        return mainWindow
+        trace?("No usable window after activation; retrying activation and rescan")
+        activate()
+        if let window = waitForUsableWindow(timeout: min(timeout, 2.0), trace: trace) {
+            return window
+        }
+
+        trace?("No usable window after activation-rescan; attempting relaunch")
+        _ = Self.launch(timeout: timeout)
+        activate()
+
+        if let window = waitForUsableWindow(timeout: timeout, trace: trace) {
+            return window
+        }
+
+        trace?("No usable window after relaunch; forcing open /Applications/KakaoTalk.app")
+        _ = Self.launchViaOpenCommand(timeout: min(timeout, 2.0))
+        activate()
+        if let window = waitForUsableWindow(timeout: min(timeout, 2.0), trace: trace) {
+            return window
+        }
+
+        trace?("No usable window after open fallback")
+        return currentUsableWindow()
     }
 
     // MARK: - Windows
@@ -111,6 +166,40 @@ public final class KakaoTalkApp: Sendable {
     /// Get the focused window
     public var focusedWindow: UIElement? {
         app.focusedWindow
+    }
+
+    private func currentUsableWindow() -> UIElement? {
+        focusedWindow ?? mainWindow ?? windows.first
+    }
+
+    private func currentUsableWindowWithSource() -> (window: UIElement, source: String)? {
+        if let focusedWindow {
+            return (focusedWindow, "focusedWindow")
+        }
+        if let mainWindow {
+            return (mainWindow, "mainWindow")
+        }
+        if let firstWindow = windows.first {
+            return (firstWindow, "windows.first")
+        }
+        return nil
+    }
+
+    private func waitForUsableWindow(timeout: TimeInterval, trace: ((String) -> Void)? = nil) -> UIElement? {
+        let startTime = Date()
+        while Date().timeIntervalSince(startTime) < timeout {
+            if let usableWindow = currentUsableWindowWithSource() {
+                trace?("Usable window found via \(usableWindow.source)")
+                return usableWindow.window
+            }
+            Thread.sleep(forTimeInterval: 0.1)
+        }
+
+        if let usableWindow = currentUsableWindowWithSource() {
+            trace?("Usable window found via \(usableWindow.source)")
+            return usableWindow.window
+        }
+        return nil
     }
 
     // MARK: - Window Discovery

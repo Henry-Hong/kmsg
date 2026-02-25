@@ -13,34 +13,26 @@ struct ChatsCommand: ParsableCommand {
     @Option(name: .shortAndLong, help: "Maximum number of chats to show")
     var limit: Int = 20
 
+    @Flag(name: .long, help: "Show AX traversal and retry details")
+    var traceAX: Bool = false
+
     func run() throws {
-        guard AccessibilityPermission.isGranted() else {
+        guard AccessibilityPermission.ensureGranted() else {
             AccessibilityPermission.printInstructions()
             throw ExitCode.failure
         }
 
         let kakao = try KakaoTalkApp()
+        let runner = AXActionRunner(traceEnabled: traceAX)
 
-        // Activate KakaoTalk and wait for the main window to be available
-        var mainWindow = kakao.activateAndWaitForWindow()
-
-        if mainWindow == nil {
-            print("Could not find KakaoTalk main window. Opening KakaoTalk...")
-            let process = Process()
-            process.executableURL = URL(fileURLWithPath: "/usr/bin/open")
-            process.arguments = ["/Applications/KakaoTalk.app"]
-            try? process.run()
-            process.waitUntilExit()
-
-            Thread.sleep(forTimeInterval: 2.0)
-            mainWindow = kakao.activateAndWaitForWindow(timeout: 5.0)
-        }
-
-        guard let mainWindow = mainWindow else {
-            print("Could not find KakaoTalk main window after opening.")
+        guard let mainWindow = kakao.ensureMainWindow(timeout: 5.0, trace: { message in
+            runner.log(message)
+        }) else {
+            print("Could not find a usable KakaoTalk window.")
             throw ExitCode.failure
         }
 
+        runner.log("chats: usable window ready")
         print("Searching for chat list in KakaoTalk...\n")
 
         // Find elements that might be chat list items
@@ -49,6 +41,7 @@ struct ChatsCommand: ParsableCommand {
         let tables = mainWindow.findAll(role: kAXTableRole, limit: 1)
         let outlines = mainWindow.findAll(role: kAXOutlineRole, limit: 1)
         let lists = mainWindow.findAll(role: kAXListRole, limit: 1)
+        runner.log("chats: tables=\(tables.count), outlines=\(outlines.count), lists=\(lists.count)")
 
         var chatItems: [UIElement] = []
 
@@ -80,6 +73,7 @@ struct ChatsCommand: ParsableCommand {
             print("No chat list found.")
             print("\nTip: Make sure you're on the 'Chats' (채팅) tab in KakaoTalk.")
             print("Use 'kmsg inspect' to explore the UI structure.")
+            runner.log("chats: no chat items found after traversal")
             return
         }
 

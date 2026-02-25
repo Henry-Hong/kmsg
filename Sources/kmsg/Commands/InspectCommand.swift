@@ -17,7 +17,7 @@ struct InspectCommand: ParsableCommand {
     var showAttributes: Bool = false
 
     func run() throws {
-        guard AccessibilityPermission.isGranted() else {
+        guard AccessibilityPermission.ensureGranted() else {
             AccessibilityPermission.printInstructions()
             throw ExitCode.failure
         }

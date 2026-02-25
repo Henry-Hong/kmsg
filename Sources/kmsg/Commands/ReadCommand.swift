@@ -16,33 +16,25 @@ struct ReadCommand: ParsableCommand {
     @Flag(name: .long, help: "Show raw element info for debugging")
     var debug: Bool = false
 
+    @Flag(name: .long, help: "Show AX traversal and retry details")
+    var traceAX: Bool = false
+
     func run() throws {
-        guard AccessibilityPermission.isGranted() else {
+        guard AccessibilityPermission.ensureGranted() else {
             AccessibilityPermission.printInstructions()
             throw ExitCode.failure
         }
 
         let kakao = try KakaoTalkApp()
+        let runner = AXActionRunner(traceEnabled: traceAX)
 
-        // Activate KakaoTalk and wait for the main window to be available
-        var mainWindow = kakao.activateAndWaitForWindow()
-
-        if mainWindow == nil {
-            print("Could not find KakaoTalk main window. Opening KakaoTalk...")
-            let process = Process()
-            process.executableURL = URL(fileURLWithPath: "/usr/bin/open")
-            process.arguments = ["/Applications/KakaoTalk.app"]
-            try? process.run()
-            process.waitUntilExit()
-
-            Thread.sleep(forTimeInterval: 2.0)
-            mainWindow = kakao.activateAndWaitForWindow(timeout: 5.0)
-        }
-
-        guard mainWindow != nil else {
-            print("Could not find KakaoTalk main window after opening.")
+        guard kakao.ensureMainWindow(timeout: 5.0, trace: { message in
+            runner.log(message)
+        }) != nil else {
+            print("Could not find a usable KakaoTalk window.")
             throw ExitCode.failure
         }
+        runner.log("read: usable window ready")
 
         // Find the chat window
         let chatWindow = kakao.windows.first { window in
@@ -66,6 +58,7 @@ struct ReadCommand: ParsableCommand {
         // Messages are typically in a scroll area or list
         let scrollAreas = window.findAll(role: kAXScrollAreaRole)
         let groups = window.findAll(role: kAXGroupRole)
+        runner.log("read: scrollAreas=\(scrollAreas.count), groups=\(groups.count)")
 
         var messageElements: [UIElement] = []
 

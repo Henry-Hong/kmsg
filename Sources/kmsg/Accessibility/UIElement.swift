@@ -156,6 +156,13 @@ public final class UIElement: @unchecked Sendable {
         return UIElement(axWindow)
     }
 
+    public var focusedUIElement: UIElement? {
+        guard let axElement: AXUIElement = attributeOptional(kAXFocusedUIElementAttribute) else {
+            return nil
+        }
+        return UIElement(axElement)
+    }
+
     public var mainWindow: UIElement? {
         guard let axWindow: AXUIElement = attributeOptional(kAXMainWindowAttribute) else {
             return nil

@@ -2,6 +2,7 @@ import Foundation
 
 // AX Role constants used throughout the application
 // These are the string values for common accessibility roles
+// Also includes common attribute keys used for heuristics.
 
 public let kAXStaticTextRole = "AXStaticText"
 public let kAXTextFieldRole = "AXTextField"
@@ -27,3 +28,5 @@ public let kAXTabGroupRole = "AXTabGroup"
 public let kAXSplitGroupRole = "AXSplitGroup"
 public let kAXScrollBarRole = "AXScrollBar"
 public let kAXWebAreaRole = "AXWebArea"
+
+public let kAXEditableAttribute = "AXEditable"
