@@ -69,12 +69,12 @@ kmsg read "본인, 친구, 또는 단톡방 이름" --limit 20 --json
 
 ```json
 {
-  "chat": "박희찬",
+  "chat": "홍길동",
   "fetched_at": "2026-02-26T01:23:45.678Z",
   "count": 20,
   "messages": [
     {
-      "author": "박희찬",
+      "author": "홍길동",
       "time_raw": "00:27",
       "body": "밤이 깊었네"
     }
@@ -95,6 +95,73 @@ kmsg read "본인, 친구, 또는 단톡방 이름" --limit 20 --json
 
 - `--json` 사용 시 JSON은 `stdout`으로만 출력됩니다.
 - `--trace-ax` 로그는 `stderr`로 분리되므로 OpenClaw 같은 파이프 연동에서 안전하게 사용할 수 있습니다.
+
+## MCP 연동
+
+`kmsg` 는 MCP 로 붙여서 사용할 수도 있습니다.
+
+우선, 아래와 같이 MCP 서버를 실행합니다.
+
+```bash
+python tools/kmsg-mcp.py
+```
+
+### OpenClaw 설정 예시
+
+```json
+{
+  "mcpServers": {
+    "kmsg": {
+      "command": "python3",
+      "args": ["/path/to/kmsg/tools/kmsg-mcp.py"],
+      "env": {
+        "KMSG_BIN": "$HOME/.local/bin/kmsg",
+        "KMSG_DEFAULT_DEEP_RECOVERY": "false",
+        "KMSG_TRACE_DEFAULT": "false"
+      }
+    }
+  }
+}
+```
+
+### 제공되는 도구
+
+- `kmsg_read`: `chat`, `limit`, `deep_recovery`, `keep_window`, `trace_ax`
+- `kmsg_send`: `chat`, `message`, `confirm`, `deep_recovery`, `keep_window`, `trace_ax`
+
+`kmsg_send`는 `confirm=true`일 때만 실제 전송을 수행합니다.
+
+### MCP 빠른 사용
+
+MCP 서버 연결 후, 아래 순서로 호출하면 됩니다.
+
+1. 최근 메시지 읽기
+
+```json
+{
+  "name": "kmsg_read",
+  "arguments": {
+    "chat": "홍길동",
+    "limit": 20
+  }
+}
+```
+
+2. 사용자 확인 후 메시지 보내기 (`confirm=true`)
+
+```json
+{
+  "name": "kmsg_send",
+  "arguments": {
+    "chat": "홍길동",
+    "message": "확인 후 보냅니다.",
+    "confirm": true
+  }
+}
+```
+
+자세한 연동/운영 가이드는 [docs/openclaw.md](./docs/openclaw.md) 를 참고하세요.
+설정 템플릿은 [docs/openclaw.mcp.example.json](./docs/openclaw.mcp.example.json) 에도 포함되어 있습니다.
 
 ## 로컬 빌드 및 개발
 
@@ -173,14 +240,14 @@ README 디버깅 가이드도 함께 업데이트해 주세요.
 gh auth login -h github.com
 
 # 배포 태그 생성/푸시
-git tag v0.1.1
-git push origin v0.1.1
+git tag v0.1.2
+git push origin v0.1.2
 ```
 
 필요하면 Actions를 수동 실행할 수 있습니다.
 
 ```bash
-gh workflow run release.yml -f tag=v0.1.1
+gh workflow run release.yml -f tag=v0.1.2
 ```
 
 ## 기타

@@ -29,3 +29,6 @@ jobs:
 
       - name: Verify version output
         run: .build/debug/kmsg --version
+
+      - name: Validate OpenClaw MCP server script
+        run: python3 -m py_compile tools/kmsg-mcp.py

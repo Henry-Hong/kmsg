@@ -1,0 +1,13 @@
+{
+  "mcpServers": {
+    "kmsg": {
+      "command": "python3",
+      "args": ["/ABS/PATH/TO/kmsg/tools/kmsg-mcp.py"],
+      "env": {
+        "KMSG_BIN": "/Users/you/.local/bin/kmsg",
+        "KMSG_DEFAULT_DEEP_RECOVERY": "false",
+        "KMSG_TRACE_DEFAULT": "false"
+      }
+    }
+  }
+}
