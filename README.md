@@ -101,7 +101,7 @@ gh workflow run release.yml -f tag=v0.1.0
 
 ## Inspiration
 
-This project is strongly inspired by:
+This project is strongly inspired by [steipete](https://github.com/steipete) and his works.
 
 - [imsg](https://github.com/steipete/imsg)
 - [openclaw](https://github.com/openclaw/openclaw)
