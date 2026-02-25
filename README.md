@@ -166,7 +166,7 @@ MCP 서버 연결 후, 아래 순서로 호출하면 됩니다.
 }
 ```
 
-자세한 연동/운영 가이드는 [docs/openclaw.md](./docs/openclaw.md) 를 참고하세요.
+openclaw 와의 자세한 연동/운영 가이드는 [docs/openclaw.md](./docs/openclaw.md) 를 참고하세요.
 설정 템플릿은 [docs/openclaw.mcp.example.json](./docs/openclaw.mcp.example.json) 에도 포함되어 있습니다.
 
 ## 로컬 빌드 및 개발

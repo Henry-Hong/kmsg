@@ -72,7 +72,7 @@ Input:
 
 ```json
 {
-  "chat": "홍근이 일기장",
+  "chat": "채팅방 이름",
   "limit": 20,
   "deep_recovery": false,
   "keep_window": false,
@@ -85,14 +85,14 @@ Success output shape:
 ```json
 {
   "ok": true,
-  "chat": "홍근이 일기장",
+  "chat": "채팅방 이름",
   "fetched_at": "2026-02-26T03:10:10.123Z",
   "count": 20,
   "messages": [
     {
-      "author": "한홍근",
+      "author": "홍길동",
       "time_raw": "00:27",
-      "body": "암튼 희찬이가 포스터 만들었던거 생각나네"
+      "body": "밤이 깊었네"
     }
   ],
   "meta": {
@@ -107,7 +107,7 @@ Input:
 
 ```json
 {
-  "chat": "홍근이 일기장",
+  "chat": "채팅방 이름",
   "message": "테스트 메시지",
   "confirm": true,
   "deep_recovery": false,
