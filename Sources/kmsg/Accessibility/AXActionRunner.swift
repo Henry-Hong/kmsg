@@ -10,7 +10,8 @@ struct AXActionRunner {
     init(traceEnabled: Bool) {
         self.traceEnabled = traceEnabled
         self.traceWriter = { message in
-            print("[trace-ax] \(message)")
+            guard let data = "[trace-ax] \(message)\n".data(using: .utf8) else { return }
+            FileHandle.standardError.write(data)
         }
     }
 
