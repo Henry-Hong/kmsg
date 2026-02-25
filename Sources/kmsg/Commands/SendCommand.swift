@@ -29,6 +29,15 @@ struct SendCommand: ParsableCommand {
     @Flag(name: .long, help: "Close chat window after sending message")
     var closeAfterSend: Bool = false
 
+    @Flag(
+        name: .long,
+        help: ArgumentHelp(
+            "Enable deep window recovery when fast window detection fails",
+            visibility: .default
+        )
+    )
+    var deepRecovery: Bool = false
+
     private enum SendFailureCode: String {
         case focusFail = "FOCUS_FAIL"
         case inputNotReflected = "INPUT_NOT_REFLECTED"
@@ -59,7 +68,12 @@ struct SendCommand: ParsableCommand {
 
         prepareCacheIfNeeded(runner: runner)
         let kakao = try KakaoTalkApp()
-        let chatWindowResolver = ChatWindowResolver(kakao: kakao, runner: runner, useCache: !noCache)
+        let chatWindowResolver = ChatWindowResolver(
+            kakao: kakao,
+            runner: runner,
+            useCache: !noCache,
+            deepRecoveryEnabled: deepRecovery
+        )
 
         do {
             runner.log("window strategy: focusedWindow -> mainWindow -> windows.first")

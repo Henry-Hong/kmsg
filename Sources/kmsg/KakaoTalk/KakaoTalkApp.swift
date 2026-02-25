@@ -86,6 +86,13 @@ public final class KakaoTalkApp: Sendable {
         return waitForRunningApplication(timeout: timeout)
     }
 
+    /// Force-open KakaoTalk app bundle path via `open /Applications/KakaoTalk.app`.
+    /// Useful when app is running but no usable window is exposed yet.
+    @discardableResult
+    public static func forceOpen(timeout: TimeInterval = 1.0) -> NSRunningApplication? {
+        launchViaOpenCommand(timeout: timeout)
+    }
+
     private static func waitForRunningApplication(timeout: TimeInterval) -> NSRunningApplication? {
         let startTime = Date()
         while Date().timeIntervalSince(startTime) < timeout {

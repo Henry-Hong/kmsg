@@ -22,15 +22,42 @@ private enum ChatWindowFailureCode: String {
     case searchMiss = "SEARCH_MISS"
 }
 
+private struct SearchScanProfile {
+    let label: String
+    let timeout: TimeInterval
+    let pollInterval: TimeInterval
+    let rowLimit: Int
+    let cellLimit: Int
+    let supplementalLimit: Int
+    let candidateNodeBudget: Int
+    let textLimit: Int
+    let textNodeBudget: Int
+    let includeSupplementalRoles: Bool
+    let includeApplicationRoot: Bool
+}
+
+private struct SearchCandidate {
+    let element: UIElement
+    let textScore: Int
+    let matchedText: String
+}
+
 struct ChatWindowResolver {
     private let kakao: KakaoTalkApp
     private let runner: AXActionRunner
     private let useCache: Bool
+    private let deepRecoveryEnabled: Bool
 
-    init(kakao: KakaoTalkApp, runner: AXActionRunner, useCache: Bool = true) {
+    init(
+        kakao: KakaoTalkApp,
+        runner: AXActionRunner,
+        useCache: Bool = true,
+        deepRecoveryEnabled: Bool = false
+    ) {
         self.kakao = kakao
         self.runner = runner
         self.useCache = useCache
+        self.deepRecoveryEnabled = deepRecoveryEnabled
     }
 
     func resolve(query: String) throws -> ChatWindowResolution {
@@ -80,13 +107,28 @@ struct ChatWindowResolver {
     }
 
     private func requireUsableWindow() throws -> UIElement {
-        if let usableWindow = kakao.ensureMainWindow(timeout: 1.2, mode: .fast, trace: { message in
+        if let immediateWindow = kakao.focusedWindow ?? kakao.mainWindow ?? kakao.windows.first {
+            runner.log("Usable window found via immediate probe")
+            return immediateWindow
+        }
+
+        if let usableWindow = kakao.ensureMainWindow(timeout: 0.9, mode: .fast, trace: { message in
             runner.log(message)
         }) {
             return usableWindow
         }
 
-        runner.log("window fast path failed; escalating to recovery mode")
+        runner.log("window fast path failed; attempting one-shot open defense")
+        if let usableWindow = attemptQuickOpenDefense(forceOpenEvenIfWindowPresent: !deepRecoveryEnabled) {
+            return usableWindow
+        }
+
+        guard deepRecoveryEnabled else {
+            runner.log("window fast path failed; deep recovery disabled")
+            throw KakaoTalkError.actionFailed("[\(ChatWindowFailureCode.windowNotReady.rawValue)] Usable KakaoTalk window unavailable (fast mode)")
+        }
+
+        runner.log("window: escalating to full recovery (3.0s)")
         if let usableWindow = kakao.ensureMainWindow(timeout: 3.0, mode: .recovery, trace: { message in
             runner.log(message)
         }) {
@@ -94,6 +136,38 @@ struct ChatWindowResolver {
         }
 
         throw KakaoTalkError.actionFailed("[\(ChatWindowFailureCode.windowNotReady.rawValue)] Usable KakaoTalk window unavailable")
+    }
+
+    private func attemptQuickOpenDefense(forceOpenEvenIfWindowPresent: Bool) -> UIElement? {
+        runner.log("window: quick-open defense start")
+
+        let hasVisibleWindow = kakao.focusedWindow != nil || kakao.mainWindow != nil || !kakao.windows.isEmpty
+        if forceOpenEvenIfWindowPresent || !hasVisibleWindow {
+            if KakaoTalkApp.isRunning {
+                if hasVisibleWindow && forceOpenEvenIfWindowPresent {
+                    runner.log("window: forcing open /Applications/KakaoTalk.app (fast-mode fallback)")
+                } else {
+                    runner.log("window: no visible windows; forcing open /Applications/KakaoTalk.app")
+                }
+                _ = KakaoTalkApp.forceOpen(timeout: 0.8)
+            } else {
+                runner.log("window: KakaoTalk not running; launching")
+                _ = KakaoTalkApp.launch(timeout: 0.8)
+            }
+        } else {
+            runner.log("window: quick-open defense skipped (windows already present)")
+        }
+
+        kakao.activate()
+        if let usableWindow = kakao.ensureMainWindow(timeout: 0.8, mode: .fast, trace: { message in
+            runner.log(message)
+        }) {
+            runner.log("window: quick-open defense succeeded")
+            return usableWindow
+        }
+
+        runner.log("window: quick-open defense failed")
+        return nil
     }
 
     private func selectSearchWindow(fallback: UIElement) -> UIElement {
@@ -247,21 +321,64 @@ struct ChatWindowResolver {
         return fields.filter { $0.isEnabled }
     }
 
-    private func waitForMatchingSearchResults(query: String, rootWindow: UIElement) -> [UIElement] {
-        var matches: [UIElement] = []
-        let found = runner.waitUntil(label: "search results", timeout: 0.4, pollInterval: 0.05) {
-            matches = findMatchingSearchResults(query: query, rootWindow: rootWindow)
+    private func waitForMatchingSearchResults(query: String, rootWindow: UIElement) -> [SearchCandidate] {
+        let fastProfile = SearchScanProfile(
+            label: "fast",
+            timeout: 0.22,
+            pollInterval: 0.04,
+            rowLimit: 24,
+            cellLimit: 24,
+            supplementalLimit: 0,
+            candidateNodeBudget: 320,
+            textLimit: 6,
+            textNodeBudget: 80,
+            includeSupplementalRoles: false,
+            includeApplicationRoot: false
+        )
+        let expandedProfile = SearchScanProfile(
+            label: "expanded",
+            timeout: 0.75,
+            pollInterval: 0.05,
+            rowLimit: 120,
+            cellLimit: 120,
+            supplementalLimit: 80,
+            candidateNodeBudget: 1_200,
+            textLimit: 16,
+            textNodeBudget: 220,
+            includeSupplementalRoles: true,
+            includeApplicationRoot: true
+        )
+
+        var matches: [SearchCandidate] = []
+        let foundFast = runner.waitUntil(label: "search results (\(fastProfile.label))", timeout: fastProfile.timeout, pollInterval: fastProfile.pollInterval) {
+            matches = findMatchingSearchResults(query: query, rootWindow: rootWindow, profile: fastProfile)
             return !matches.isEmpty
         }
+        if !foundFast {
+            matches = findMatchingSearchResults(query: query, rootWindow: rootWindow, profile: fastProfile)
+        }
+        if !matches.isEmpty {
+            runner.log("search: matching candidates=\(matches.count) via \(fastProfile.label)")
+            return matches
+        }
 
-        if !found {
-            matches = findMatchingSearchResults(query: query, rootWindow: rootWindow)
+        runner.log("search: no matches in fast scan; expanding search scope")
+        let foundExpanded = runner.waitUntil(label: "search results (\(expandedProfile.label))", timeout: expandedProfile.timeout, pollInterval: expandedProfile.pollInterval) {
+            matches = findMatchingSearchResults(query: query, rootWindow: rootWindow, profile: expandedProfile)
+            return !matches.isEmpty
+        }
+        if !foundExpanded {
+            matches = findMatchingSearchResults(query: query, rootWindow: rootWindow, profile: expandedProfile)
         }
         runner.log("search: matching candidates=\(matches.count)")
         return matches
     }
 
-    private func findMatchingSearchResults(query: String, rootWindow: UIElement) -> [UIElement] {
+    private func findMatchingSearchResults(
+        query: String,
+        rootWindow: UIElement,
+        profile: SearchScanProfile
+    ) -> [SearchCandidate] {
         var roots: [UIElement] = [rootWindow]
         if let focusedWindow = kakao.focusedWindow {
             roots.append(focusedWindow)
@@ -269,18 +386,48 @@ struct ChatWindowResolver {
         if let mainWindow = kakao.mainWindow {
             roots.append(mainWindow)
         }
+        if profile.includeApplicationRoot {
+            roots.append(kakao.applicationElement)
+        }
+        roots = deduplicateElements(roots)
 
-        var results: [UIElement] = []
+        var results: [SearchCandidate] = []
         for root in roots {
-            let candidates = (root.findAll(role: kAXRowRole, limit: 24, maxNodes: 260) + root.findAll(role: kAXCellRole, limit: 24, maxNodes: 260)).filter { element in
-                containsText(query, in: element)
+            var candidates: [UIElement] = []
+            candidates.append(contentsOf: root.findAll(role: kAXRowRole, limit: profile.rowLimit, maxNodes: profile.candidateNodeBudget))
+            candidates.append(contentsOf: root.findAll(role: kAXCellRole, limit: profile.cellLimit, maxNodes: profile.candidateNodeBudget))
+
+            if profile.includeSupplementalRoles {
+                candidates.append(contentsOf: root.findAll(role: kAXGroupRole, limit: profile.supplementalLimit, maxNodes: profile.candidateNodeBudget))
+                candidates.append(contentsOf: root.findAll(role: kAXButtonRole, limit: profile.supplementalLimit, maxNodes: profile.candidateNodeBudget))
+                candidates.append(contentsOf: root.findAll(role: kAXStaticTextRole, limit: profile.supplementalLimit, maxNodes: profile.candidateNodeBudget))
             }
-            results.append(contentsOf: candidates)
-            if !candidates.isEmpty {
+
+            candidates = deduplicateElements(candidates)
+            for candidate in candidates {
+                let (matchScore, matchedText) = bestQueryMatch(
+                    query: query,
+                    in: candidate,
+                    textLimit: profile.textLimit,
+                    textNodeBudget: profile.textNodeBudget
+                )
+                guard matchScore > 0, let matchedText else { continue }
+                let activationCandidate = activationTarget(for: candidate)
+                results.append(
+                    SearchCandidate(
+                        element: activationCandidate,
+                        textScore: matchScore,
+                        matchedText: matchedText
+                    )
+                )
+            }
+
+            if !results.isEmpty && !profile.includeSupplementalRoles {
                 break
             }
         }
-        return results
+
+        return deduplicateSearchCandidates(results)
     }
 
     private func waitForOpenedChatWindow(query: String, fallbackWindow: UIElement) -> UIElement? {
@@ -299,7 +446,7 @@ struct ChatWindowResolver {
 
         if let focusedWindow = kakao.focusedWindow,
            let title = focusedWindow.title,
-           title.localizedCaseInsensitiveContains(query)
+           scoreQueryMatch(query: query, candidateText: title) > 0
         {
             return focusedWindow
         }
@@ -388,32 +535,37 @@ struct ChatWindowResolver {
         return relativeY < 0.5
     }
 
-    private func pickBestSearchResult(from candidates: [UIElement]) -> UIElement? {
+    private func pickBestSearchResult(from candidates: [SearchCandidate]) -> UIElement? {
         guard !candidates.isEmpty else { return nil }
         let best = candidates.max { lhs, rhs in
             scoreSearchResult(lhs) < scoreSearchResult(rhs)
         }
         if let best {
-            runner.log("search: best result role='\(best.role ?? "unknown")' title='\(best.title ?? "")'")
+            runner.log(
+                "search: best result role='\(best.element.role ?? "unknown")' title='\(best.element.title ?? "")' textScore=\(best.textScore) matched='\(best.matchedText)'"
+            )
         }
-        return best
+        return best?.element
     }
 
-    private func scoreSearchResult(_ element: UIElement) -> Int {
-        var score = 0
+    private func scoreSearchResult(_ candidate: SearchCandidate) -> Int {
+        var score = candidate.textScore * 4
+        let element = candidate.element
         if supportsAction("AXPress", on: element) {
-            score += 10_000
+            score += 4_000
         }
         if supportsAction("AXConfirm", on: element) {
-            score += 8_000
-        }
-        if element.role == kAXRowRole {
-            score += 4_000
-        } else if element.role == kAXCellRole {
             score += 3_000
         }
+        if element.role == kAXRowRole {
+            score += 1_600
+        } else if element.role == kAXCellRole {
+            score += 1_200
+        } else if element.role == kAXButtonRole {
+            score += 800
+        }
         if let title = element.title, !title.isEmpty {
-            score += 500
+            score += 300
         }
         if element.role == nil || element.role?.isEmpty == true {
             score -= 2_000
@@ -522,9 +674,248 @@ struct ChatWindowResolver {
     }
 
     private func findMatchingChatWindow(in windows: [UIElement], query: String) -> UIElement? {
-        windows.first { window in
-            guard let title = window.title else { return false }
-            return title.localizedCaseInsensitiveContains(query)
+        windows.compactMap { window -> (window: UIElement, score: Int)? in
+            guard let title = window.title else { return nil }
+            let score = scoreQueryMatch(query: query, candidateText: title)
+            guard score > 0 else { return nil }
+            return (window, score)
+        }
+        .max(by: { lhs, rhs in
+            lhs.score < rhs.score
+        })?
+        .window
+    }
+
+    private func bestQueryMatch(
+        query: String,
+        in element: UIElement,
+        textLimit: Int,
+        textNodeBudget: Int
+    ) -> (score: Int, matchedText: String?) {
+        let candidateTexts = collectCandidateTexts(
+            from: element,
+            textLimit: textLimit,
+            textNodeBudget: textNodeBudget
+        )
+        guard !candidateTexts.isEmpty else { return (0, nil) }
+
+        var bestScore = 0
+        var bestText: String?
+        for candidateText in candidateTexts {
+            let score = scoreQueryMatch(query: query, candidateText: candidateText)
+            if score > bestScore {
+                bestScore = score
+                bestText = candidateText
+            }
+        }
+
+        return (bestScore, bestText)
+    }
+
+    private func collectCandidateTexts(
+        from element: UIElement,
+        textLimit: Int,
+        textNodeBudget: Int
+    ) -> [String] {
+        var texts: [String] = []
+
+        func appendText(_ raw: String?) {
+            guard let raw else { return }
+            let trimmed = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !trimmed.isEmpty else { return }
+            texts.append(trimmed)
+        }
+
+        appendText(element.title)
+        appendText(element.stringValue)
+        appendText(element.axDescription)
+
+        let staticTexts = element.findAll(
+            role: kAXStaticTextRole,
+            limit: textLimit,
+            maxNodes: textNodeBudget
+        )
+        for staticText in staticTexts {
+            appendText(staticText.stringValue)
+        }
+
+        let textAreas = element.findAll(
+            role: kAXTextAreaRole,
+            limit: max(2, textLimit / 2),
+            maxNodes: textNodeBudget
+        )
+        for textArea in textAreas {
+            appendText(textArea.stringValue)
+        }
+
+        return deduplicateStringsPreservingOrder(texts)
+    }
+
+    private func scoreQueryMatch(query: String, candidateText: String) -> Int {
+        let queryNormalized = normalizeSearchToken(query)
+        let candidateNormalized = normalizeSearchToken(candidateText)
+        guard !queryNormalized.isEmpty, !candidateNormalized.isEmpty else { return 0 }
+
+        if queryNormalized == candidateNormalized {
+            return 12_000
+        }
+        if candidateNormalized.hasPrefix(queryNormalized) {
+            return 10_500
+        }
+        if candidateNormalized.contains(queryNormalized) {
+            return 9_800
+        }
+        if queryNormalized.contains(candidateNormalized), candidateNormalized.count >= 2 {
+            return 8_800
+        }
+
+        let queryVariants = honorificVariants(of: queryNormalized)
+        let candidateVariants = honorificVariants(of: candidateNormalized)
+        var best = 0
+
+        for queryVariant in queryVariants where !queryVariant.isEmpty {
+            for candidateVariant in candidateVariants where !candidateVariant.isEmpty {
+                if queryVariant == candidateVariant {
+                    best = max(best, 8_700)
+                    continue
+                }
+                if candidateVariant.hasPrefix(queryVariant) {
+                    best = max(best, 8_400)
+                    continue
+                }
+                if candidateVariant.contains(queryVariant) {
+                    best = max(best, 8_200)
+                    continue
+                }
+                if queryVariant.contains(candidateVariant), candidateVariant.count >= 2 {
+                    best = max(best, 7_900)
+                }
+            }
+        }
+
+        if best > 0 {
+            return best
+        }
+
+        let minLength = min(queryNormalized.count, candidateNormalized.count)
+        if minLength >= 2 {
+            let shortest = queryNormalized.count <= candidateNormalized.count ? queryNormalized : candidateNormalized
+            let longest = queryNormalized.count > candidateNormalized.count ? queryNormalized : candidateNormalized
+            if longest.contains(shortest) {
+                return 6_600
+            }
+        }
+
+        return 0
+    }
+
+    private func normalizeSearchToken(_ text: String) -> String {
+        let lowered = text.folding(options: [.diacriticInsensitive, .widthInsensitive], locale: .current).lowercased()
+        var scalars = String.UnicodeScalarView()
+        scalars.reserveCapacity(lowered.unicodeScalars.count)
+
+        for scalar in lowered.unicodeScalars {
+            if CharacterSet.whitespacesAndNewlines.contains(scalar) {
+                continue
+            }
+            if scalar.value == 0x200B || scalar.value == 0x200C || scalar.value == 0x200D || scalar.value == 0xFEFF {
+                continue
+            }
+            if CharacterSet.punctuationCharacters.contains(scalar) || CharacterSet.symbols.contains(scalar) {
+                continue
+            }
+            scalars.append(scalar)
+        }
+
+        return String(scalars)
+    }
+
+    private func honorificVariants(of text: String) -> [String] {
+        let suffixes = ["선생님", "님", "씨"]
+        var variants = Set<String>([text])
+        for suffix in suffixes where text.hasSuffix(suffix) {
+            let candidate = String(text.dropLast(suffix.count))
+            if !candidate.isEmpty {
+                variants.insert(candidate)
+            }
+        }
+        return Array(variants)
+    }
+
+    private func deduplicateSearchCandidates(_ candidates: [SearchCandidate]) -> [SearchCandidate] {
+        var unique: [SearchCandidate] = []
+        unique.reserveCapacity(candidates.count)
+
+        for candidate in candidates {
+            if let index = unique.firstIndex(where: { existing in
+                areSameAXElement(existing.element, candidate.element)
+            }) {
+                if candidate.textScore > unique[index].textScore {
+                    unique[index] = candidate
+                }
+                continue
+            }
+            unique.append(candidate)
+        }
+
+        return unique
+    }
+
+    private func deduplicateElements(_ elements: [UIElement]) -> [UIElement] {
+        var unique: [UIElement] = []
+        unique.reserveCapacity(elements.count)
+        for element in elements {
+            if unique.contains(where: { existing in
+                areSameAXElement(existing, element)
+            }) {
+                continue
+            }
+            unique.append(element)
+        }
+
+        return unique
+    }
+
+    private func deduplicateStringsPreservingOrder(_ values: [String]) -> [String] {
+        var seen = Set<String>()
+        var unique: [String] = []
+        unique.reserveCapacity(values.count)
+
+        for value in values {
+            if seen.contains(value) {
+                continue
+            }
+            seen.insert(value)
+            unique.append(value)
+        }
+
+        return unique
+    }
+
+    private func activationTarget(for element: UIElement) -> UIElement {
+        if isSearchActivationRole(element.role) {
+            return element
+        }
+
+        var cursor = element.parent
+        var hops = 0
+        while let current = cursor, hops < 4 {
+            if isSearchActivationRole(current.role) {
+                return current
+            }
+            cursor = current.parent
+            hops += 1
+        }
+
+        return element
+    }
+
+    private func isSearchActivationRole(_ role: String?) -> Bool {
+        switch role {
+        case kAXRowRole, kAXCellRole, kAXButtonRole, kAXGroupRole:
+            return true
+        default:
+            return false
         }
     }
 
@@ -537,19 +928,6 @@ struct ChatWindowResolver {
                 return lhsY < rhsY
             }
             .first
-    }
-
-    private func containsText(_ text: String, in element: UIElement) -> Bool {
-        if let title = element.title, title.localizedCaseInsensitiveContains(text) {
-            return true
-        }
-        if let value = element.stringValue, value.localizedCaseInsensitiveContains(text) {
-            return true
-        }
-        let staticTexts = element.findAll(role: kAXStaticTextRole, limit: 5, maxNodes: 48)
-        return staticTexts.contains { item in
-            (item.stringValue ?? "").localizedCaseInsensitiveContains(text)
-        }
     }
 
     private func tryRaiseWindow(_ window: UIElement) -> Bool {
