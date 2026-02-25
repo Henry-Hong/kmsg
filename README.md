@@ -1,8 +1,6 @@
 # kmsg
 
-> **Disclaimer**
->
-> `kmsg`는 Kakao Corp. 의 공식 도구가 아닙니다.
+> **Disclaimer**: `kmsg`는 Kakao Corp. 의 공식 도구가 아닙니다.
 > 사용자는 본인 계정/환경에서 관련 법규, 서비스 약관, 회사 보안 정책을 준수할 책임이 있습니다.
 > 이 도구 사용으로 발생할 수 있는 계정 제한, 오작동, 데이터 손실, 기타 손해에 대한 책임은 사용자에게 있습니다.
 
@@ -40,9 +38,11 @@ echo 'export PATH="$HOME/.local/bin:$PATH"' >> ~/.zshrc && source ~/.zshrc
 ```bash
 kmsg status
 kmsg send "본인, 친구, 또는 단톡방 이름" "안녕하세요"
-kmsg send "본인, 친구, 또는 단톡방 이름" "$(date '+%Y-%m-%d %H:%M:%S') 테스트" --close-after-send
+kmsg send "본인, 친구, 또는 단톡방 이름" "$(date '+%Y-%m-%d %H:%M:%S') 테스트"
+kmsg send "본인, 친구, 또는 단톡방 이름" "테스트" --keep-window
 kmsg chats
 kmsg read "본인, 친구, 또는 단톡방 이름" --limit 20
+kmsg read "본인, 친구, 또는 단톡방 이름" --limit 20 --keep-window
 kmsg read "본인, 친구, 또는 단톡방 이름" --limit 20 --json
 kmsg read "본인, 친구, 또는 단톡방 이름" --limit 20 --deep-recovery
 ```
@@ -115,11 +115,13 @@ install -m 755 .build/release/kmsg ~/.local/bin/kmsg
 kmsg send "본인, 친구, 또는 단톡방 이름" "테스트" --trace-ax
 KMSG_AX_TIMEOUT=0.25 kmsg send "본인, 친구, 또는 단톡방 이름" "테스트"
 kmsg cache warmup --recipient "본인, 친구, 또는 단톡방 이름" --trace-ax
+kmsg cache warmup --recipient "본인, 친구, 또는 단톡방 이름" --keep-window
 kmsg read "본인, 친구, 또는 단톡방 이름" --deep-recovery --trace-ax
 kmsg send "본인, 친구, 또는 단톡방 이름" "테스트" --deep-recovery --trace-ax
 ```
 
 `--deep-recovery`는 빠른 창 탐색이 실패할 때만 relaunch/open 복구를 추가로 수행합니다.
+기본적으로 자동으로 연 카카오톡 창은 명령 종료 시 닫히며, `--keep-window`(또는 `-k`)로 유지할 수 있습니다.
 
 ### 디버깅 가이드 (inspect / trace-ax)
 
