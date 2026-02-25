@@ -7,4 +7,6 @@ DerivedData/
 .swiftpm/xcode/package.xcworkspace/contents.xcworkspacedata
 .netrc
 .claude/settings.local.json
+video/node_modules/
+video/out/
 
