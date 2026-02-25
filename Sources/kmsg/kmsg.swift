@@ -15,7 +15,7 @@ struct Kmsg: ParsableCommand {
 
             Run 'kmsg status' to check if everything is set up correctly.
             """,
-        version: "0.1.0",
+        version: BuildVersion.current,
         subcommands: [
             StatusCommand.self,
             InspectCommand.self,

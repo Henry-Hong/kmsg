@@ -42,9 +42,9 @@ kmsg status
 kmsg send "본인, 친구, 또는 단톡방 이름" "안녕하세요"
 kmsg send "본인, 친구, 또는 단톡방 이름" "$(date '+%Y-%m-%d %H:%M:%S') 테스트" --close-after-send
 kmsg chats
-kmsg read "본인, 친구, 또는 단톡방 이름" --limit 30
-kmsg read "본인, 친구, 또는 단톡방 이름" --limit 30 --json
-kmsg read "본인, 친구, 또는 단톡방 이름" --limit 30 --deep-recovery
+kmsg read "본인, 친구, 또는 단톡방 이름" --limit 20
+kmsg read "본인, 친구, 또는 단톡방 이름" --limit 20 --json
+kmsg read "본인, 친구, 또는 단톡방 이름" --limit 20 --deep-recovery
 ```
 
 ## 권한 문제 해결
@@ -105,6 +105,10 @@ swift build -c release
 install -m 755 .build/release/kmsg ~/.local/bin/kmsg
 ```
 
+## TODO / Roadmap
+
+진행 예정 항목은 [TODO.md](./TODO.md) 에서 관리합니다.
+
 ### 고급 옵션
 
 ```bash
@@ -160,25 +164,27 @@ README 디버깅 가이드도 함께 업데이트해 주세요.
 `v*` 태그를 푸시하면 GitHub Actions가 자동으로 빌드해서
 `kmsg-macos-universal` 파일을 Releases에 업로드합니다.
 
+배포 전에 `VERSION` 파일 값을 먼저 업데이트하세요.
+
 ```bash
 # gh 토큰이 만료됐으면 재로그인
 gh auth login -h github.com
 
-# 릴리스 태그 생성/푸시
-git tag v0.1.0
-git push origin v0.1.0
+# 배포 태그 생성/푸시
+git tag v0.1.1
+git push origin v0.1.1
 ```
 
 필요하면 Actions를 수동 실행할 수 있습니다.
 
 ```bash
-gh workflow run release.yml -f tag=v0.1.0
+gh workflow run release.yml -f tag=v0.1.1
 ```
 
 ## 기타
 
-- 릴리스 설치는 최신 릴리스 자산 `kmsg-macos-universal`을 사용합니다.
-- 다운로드 실패 시: https://github.com/channprj/kmsg/releases 에서 직접 내려받아 `~/.local/bin/kmsg`로 저장 후 `chmod +x ~/.local/bin/kmsg`.
+- 설치는 `kmsg-macos-universal` 을 사용합니다.
+- 다운로드 실패 시 https://github.com/channprj/kmsg/releases 에서 직접 내려받아 `~/.local/bin/kmsg`로 저장 후 `chmod +x ~/.local/bin/kmsg` 를 진행하시면 됩니다.
 
 ## Inspiration
 

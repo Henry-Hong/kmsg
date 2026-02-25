@@ -13,9 +13,22 @@ let package = Package(
     ],
     targets: [
         .executableTarget(
+            name: "VersionGenTool"
+        ),
+        .plugin(
+            name: "VersionGenPlugin",
+            capability: .buildTool(),
+            dependencies: [
+                "VersionGenTool",
+            ]
+        ),
+        .executableTarget(
             name: "kmsg",
             dependencies: [
                 .product(name: "ArgumentParser", package: "swift-argument-parser"),
+            ],
+            plugins: [
+                .plugin(name: "VersionGenPlugin"),
             ]
         ),
     ]
