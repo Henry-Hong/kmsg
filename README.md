@@ -8,7 +8,7 @@
 
 ## Demo
 
-> WIP
+https://github.com/user-attachments/assets/c620b2e3-7106-40fa-86d1-ed847e3b1a6f
 
 ## 빠른 시작
 
