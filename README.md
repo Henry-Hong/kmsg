@@ -370,10 +370,8 @@ README 디버깅 가이드도 함께 업데이트해 주세요.
 
 ## Deploy
 
-`v*` 태그를 푸시하면 GitHub Actions가 자동으로 빌드해서
-`kmsg-macos-universal` 파일을 Releases에 업로드합니다.
-또한 `TAP_REPO_TOKEN`이 설정되어 있으면 `channprj/homebrew-tap`의
-`Formula/kmsg.rb`를 자동으로 갱신합니다.
+`v*` 태그를 푸시하면 GitHub Actions가 자동으로 빌드해서 `kmsg-macos-universal` 파일을 Releases에 업로드합니다.
+또한 `TAP_REPO_TOKEN`이 설정되어 있으면 `channprj/homebrew-tap`의 `Formula/kmsg.rb`를 자동으로 갱신합니다.
 
 배포 전에 `VERSION` 파일 값을 먼저 업데이트하세요.
 
@@ -387,9 +385,15 @@ git push origin v0.2.3
 ```
 
 필요하면 Actions를 수동 실행할 수 있습니다.
+`workflow_dispatch`에서 `tag`를 비워두면 `VERSION` 파일을 읽어 `v<version>`으로 자동 생성합니다.
+`tag`를 직접 입력할 경우 `vX.Y.Z` 형식만 허용됩니다.
 
 ```bash
-gh workflow run release.yml -f tag=v0.2.3
+# 태그를 직접 지정해서 실행
+gh workflow run release.yml -f tag=v0.2.4
+
+# tag 미지정 시 VERSION(예: 0.2.4) 기반으로 실행
+gh workflow run release.yml
 ```
 
 ### Homebrew 자동 동기화 설정 (최초 1회)
