@@ -236,8 +236,6 @@ kmsg read "본인, 친구, 또는 단톡방 이름" --limit 20 --trace-ax
 kmsg send "본인, 친구, 또는 단톡방 이름" "테스트" --trace-ax --dry-run
 ```
 
-#### 팁
-
 - `AXTextArea, value: "..."` 는 실제 메시지 본문 후보입니다.
 - `AXStaticText, value: "5\n00:27"` 같은 값은 보통 카운트/시간 메타 정보입니다.
 - 이슈 보고 시 `inspect` 출력과 `--trace-ax` 출력을 함께 첨부하면 원인 파악이 빨라집니다.
@@ -250,8 +248,6 @@ kmsg send "본인, 친구, 또는 단톡방 이름" "테스트" --trace-ax --dry
 2. 기대 결과: 무엇이 보여야 하는지
 3. 실제 결과: 현재 무엇이 출력되는지
 4. 관련 로그: `inspect` 본문 구간 (`AXRow > AXCell > AXTextArea`) + `trace-ax`
-
-#### 예시 요청
 
 ```text
 kmsg read가 메시지 본문 대신 시간/숫자를 출력합니다.
