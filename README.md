@@ -44,6 +44,7 @@ kmsg status
 kmsg send "본인, 친구, 또는 단톡방 이름" "안녕하세요"
 kmsg send "본인, 친구, 또는 단톡방 이름" "$(date '+%Y-%m-%d %H:%M:%S') 테스트"
 kmsg send "본인, 친구, 또는 단톡방 이름" "테스트" --keep-window
+kmsg send-image "본인, 친구, 또는 단톡방 이름" "/path/to/image.png"
 kmsg chats
 kmsg read "본인, 친구, 또는 단톡방 이름" --limit 20
 kmsg read "본인, 친구, 또는 단톡방 이름" --limit 20 --keep-window
@@ -134,8 +135,10 @@ MCP 서버를 띄웠다면 아래와 같이 JSON 설정값을 주면서 MCP 연�
 
 - `kmsg_read`: `chat`, `limit`, `deep_recovery`, `keep_window`, `trace_ax`
 - `kmsg_send`: `chat`, `message`, `confirm`, `deep_recovery`, `keep_window`, `trace_ax`
+- `kmsg_send_image`: `chat`, `image_path`, `confirm`, `deep_recovery`, `keep_window`, `trace_ax`
 
-`kmsg_send`는 `confirm=true`일 때만 실제 전송을 수행합니다.
+`kmsg_send`, `kmsg_send_image`는 기본값(`confirm=false`, 또는 `confirm` 생략)에서 실제 전송을 수행합니다.
+`confirm=true`로 호출하면 전송하지 않고 `CONFIRMATION_REQUIRED`를 반환합니다.
 
 ### MCP 빠른 사용
 
@@ -153,14 +156,38 @@ MCP 서버 연결 후, 아래 순서로 호출하면 됩니다.
 }
 ```
 
-2. 사용자 확인 후 메시지 보내기 (`confirm=true`)
+2. 메시지 보내기 (기본값: 즉시 전송)
 
 ```json
 {
   "name": "kmsg_send",
   "arguments": {
     "chat": "홍길동",
-    "message": "확인 후 보냅니다.",
+    "message": "바로 전송됩니다."
+  }
+}
+```
+
+3. 이미지 보내기 (기본값: 즉시 전송)
+
+```json
+{
+  "name": "kmsg_send_image",
+  "arguments": {
+    "chat": "홍길동",
+    "image_path": "/path/to/image.png"
+  }
+}
+```
+
+4. 전송 전 확인 단계 강제 (`confirm=true`)
+
+```json
+{
+  "name": "kmsg_send",
+  "arguments": {
+    "chat": "홍길동",
+    "message": "사용자 승인 후 다시 전송",
     "confirm": true
   }
 }
@@ -186,11 +213,13 @@ install -m 755 .build/release/kmsg ~/.local/bin/kmsg
 
 ```bash
 kmsg send "본인, 친구, 또는 단톡방 이름" "테스트" --trace-ax
+kmsg send-image "본인, 친구, 또는 단톡방 이름" "/path/to/image.png" --trace-ax
 KMSG_AX_TIMEOUT=0.25 kmsg send "본인, 친구, 또는 단톡방 이름" "테스트"
 kmsg cache warmup --recipient "본인, 친구, 또는 단톡방 이름" --trace-ax
 kmsg cache warmup --recipient "본인, 친구, 또는 단톡방 이름" --keep-window
 kmsg read "본인, 친구, 또는 단톡방 이름" --deep-recovery --trace-ax
 kmsg send "본인, 친구, 또는 단톡방 이름" "테스트" --deep-recovery --trace-ax
+kmsg send-image "본인, 친구, 또는 단톡방 이름" "/path/to/image.png" --deep-recovery --trace-ax --keep-window
 ```
 
 `--deep-recovery`는 빠른 창 탐색이 실패할 때만 relaunch/open 복구를 추가로 수행합니다.

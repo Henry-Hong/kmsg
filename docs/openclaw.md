@@ -8,10 +8,11 @@ The repository includes a local MCP stdio server:
 
 - `tools/kmsg-mcp.py`
 
-It exposes 2 tools:
+It exposes 3 tools:
 
 - `kmsg_read`: reads KakaoTalk messages using `kmsg read --json`
-- `kmsg_send`: sends KakaoTalk messages using `kmsg send` (requires explicit confirmation)
+- `kmsg_send`: sends KakaoTalk messages using `kmsg send`
+- `kmsg_send_image`: sends KakaoTalk images using `kmsg send-image`
 
 ## Prerequisites
 
@@ -109,7 +110,7 @@ Input:
 {
   "chat": "채팅방 이름",
   "message": "테스트 메시지",
-  "confirm": true,
+  "confirm": false,
   "deep_recovery": false,
   "keep_window": false,
   "trace_ax": false
@@ -118,12 +119,32 @@ Input:
 
 Notes:
 
-- `confirm` must be `true`; otherwise send is rejected with `CONFIRMATION_REQUIRED`.
-- This enforces a confirmation step in agent workflows.
+- Default behavior sends immediately (`confirm=false` or omitted).
+- `confirm=true` blocks sending and returns `CONFIRMATION_REQUIRED`.
+
+## `kmsg_send_image`
+
+Input:
+
+```json
+{
+  "chat": "채팅방 이름",
+  "image_path": "/path/to/image.png",
+  "confirm": false,
+  "deep_recovery": false,
+  "keep_window": false,
+  "trace_ax": false
+}
+```
+
+Notes:
+
+- Default behavior sends immediately (`confirm=false` or omitted).
+- `confirm=true` blocks sending and returns `CONFIRMATION_REQUIRED`.
 
 ## Error model
 
-Both tools return structured errors with:
+All tools return structured errors with:
 
 - `ok: false`
 - `error.code`
@@ -149,7 +170,8 @@ Common `error.code` values:
 1. Use `kmsg_read` to fetch latest context.
 2. Draft reply.
 3. Ask user for approval.
-4. Call `kmsg_send` only with `confirm=true` after approval.
+4. Send with `kmsg_send` / `kmsg_send_image` using `confirm=false` (or omit `confirm`).
+5. If you want to force an extra confirmation step before send, call with `confirm=true` first.
 
 ## Troubleshooting
 
