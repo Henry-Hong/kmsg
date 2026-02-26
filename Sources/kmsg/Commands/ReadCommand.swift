@@ -12,6 +12,13 @@ struct ReadCommand: ParsableCommand {
             case timeRaw = "time_raw"
             case body
         }
+
+        func encode(to encoder: Encoder) throws {
+            var container = encoder.container(keyedBy: CodingKeys.self)
+            try container.encode(author ?? "(me)", forKey: .author)
+            try container.encodeIfPresent(timeRaw, forKey: .timeRaw)
+            try container.encode(body, forKey: .body)
+        }
     }
 
     private struct ReadJSONResponse: Codable {
@@ -47,7 +54,7 @@ struct ReadCommand: ParsableCommand {
     static let configuration = CommandConfiguration(
         commandName: "read",
         abstract: "Read messages from a chat",
-        discussion: "When author is null, the message was sent by you."
+        discussion: "When author is \"(me)\", the message was sent by you."
     )
 
     @Argument(help: "Name of the chat to read from (partial match supported)")
@@ -176,11 +183,11 @@ struct ReadCommand: ParsableCommand {
         print("Recent messages (\(displayMessages.count)):\n")
         for (index, message) in displayMessages.enumerated() {
             if debug {
-                print("[\(index + 1)] author=\(message.author ?? "unknown") time=\(message.timeRaw ?? "unknown") body=\(message.body)")
+                print("[\(index + 1)] author=\(message.author ?? "(me)") time=\(message.timeRaw ?? "unknown") body=\(message.body)")
                 continue
             }
 
-            print("[\(index + 1)] author: \(message.author ?? "unknown")")
+            print("[\(index + 1)] author: \(message.author ?? "(me)")")
             print("    time: \(message.timeRaw ?? "unknown")")
             print("    body: \(message.body)")
             print("")
