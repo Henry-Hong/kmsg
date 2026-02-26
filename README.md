@@ -1,12 +1,12 @@
 # kmsg
 
-<p align="center"><img src="assets/kmsg-logo.jpg" alt="kmsg logo" width="280" /></p>
+<p><img src="assets/kmsg-logo.jpg" alt="kmsg logo" width="220" /></p>
 
 > **Disclaimer**: `kmsg`는 Kakao Corp. 의 공식 도구가 아닙니다.
 > 사용자는 본인 계정/환경에서 관련 법규, 서비스 약관, 회사 보안 정책을 준수할 책임이 있습니다.
 > 이 도구 사용으로 발생할 수 있는 계정 제한, 오작동, 데이터 손실, 기타 손해에 대한 책임은 사용자에게 있습니다.
 
-`kmsg` 는 macOS에서 카카오톡 메시지를 CLI 로 읽고 보내는 도구입니다. 단순한 수동 CLI 를 넘어, AI Agent 또는 Hook 이벤트 등의 자동화 파이프라인에 연결하기 쉽도록 구현했습니다.
+`kmsg` 는 macOS에서 카카오톡 메시지를 CLI 로 읽고 보내는 도구입니다. 단순한 수동 CLI 를 넘어, AI Agent 또는 Hook 이벤트 등의 자동화 파이프라인에 연결하기 쉽도록 구현했습니다. kmsg 는 [openclaw](https://github.com/openclaw/openclaw) 의 창시자인 [steipete](https://github.com/steipete) 가 만든 iMessage 컨트롤을 위한 CLI 도구인 [imsg](https://github.com/steipete/imsg) 에 영감을 받아 작성되었습니다.
 
 ## Demo
 
