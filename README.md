@@ -1,5 +1,7 @@
 # kmsg
 
+<p align="center"><img src="assets/kmsg-logo.jpg" alt="kmsg logo" width="280" /></p>
+
 > **Disclaimer**: `kmsg`는 Kakao Corp. 의 공식 도구가 아닙니다.
 > 사용자는 본인 계정/환경에서 관련 법규, 서비스 약관, 회사 보안 정책을 준수할 책임이 있습니다.
 > 이 도구 사용으로 발생할 수 있는 계정 제한, 오작동, 데이터 손실, 기타 손해에 대한 책임은 사용자에게 있습니다.
