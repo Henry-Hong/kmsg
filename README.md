@@ -205,10 +205,6 @@ swift build -c release
 install -m 755 .build/release/kmsg ~/.local/bin/kmsg
 ```
 
-## Roadmap
-
-진행 예정 항목은 [TODO.md](./TODO.md) 에서 관리합니다.
-
 ### 고급 옵션
 
 ```bash
