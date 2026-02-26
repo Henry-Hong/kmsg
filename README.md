@@ -50,7 +50,97 @@ kmsg read "본인, 친구, 또는 단톡방 이름" --limit 20
 kmsg read "본인, 친구, 또는 단톡방 이름" --limit 20 --keep-window
 kmsg read "본인, 친구, 또는 단톡방 이름" --limit 20 --json
 kmsg read "본인, 친구, 또는 단톡방 이름" --limit 20 --deep-recovery
+kmsg inspect --window 0 --depth 20 --debug-layout
 ```
+
+## CLI 명령어 레퍼런스
+
+옵션은 빌드 기준 `kmsg --help`, `kmsg <command> --help` 출력과 동일하게 관리됩니다.
+
+### status
+
+```bash
+kmsg status [--verbose]
+```
+
+- `--verbose`: 상세 상태 출력
+
+### chats
+
+```bash
+kmsg chats [--verbose] [--limit <limit>] [--trace-ax]
+```
+
+- `-v, --verbose`: 상세 정보 출력
+- `-l, --limit <limit>`: 최대 채팅 목록 개수 (기본값: 20)
+- `--trace-ax`: AX 탐색/재시도 로그 출력
+
+### read
+
+```bash
+kmsg read <chat> [--limit <limit>] [--debug] [--trace-ax] [--keep-window] [--deep-recovery] [--json]
+```
+
+- `-l, --limit <limit>`: 최대 메시지 개수 (기본값: 20)
+- `--debug`: raw element 디버그 정보 출력
+- `--trace-ax`: AX 탐색/재시도 로그 출력
+- `-k, --keep-window`: 자동으로 연 채팅창 유지
+- `--deep-recovery`: 빠른 탐색 실패 시 deep recovery 수행
+- `--json`: JSON 형식으로 출력
+
+### send
+
+```bash
+kmsg send <recipient> <message> [--dry-run] [--trace-ax] [--no-cache] [--refresh-cache] [--keep-window] [--deep-recovery]
+```
+
+- `--dry-run`: 실제 전송 없이 시뮬레이션
+- `--trace-ax`: AX 탐색/재시도 로그 출력
+- `--no-cache`: 이번 실행에서 AX path cache 비활성화
+- `--refresh-cache`: 이번 실행에서 AX path cache 강제 재구성
+- `-k, --keep-window`: 자동으로 연 채팅창 유지
+- `--deep-recovery`: 빠른 탐색 실패 시 deep recovery 수행
+
+### send-image
+
+```bash
+kmsg send-image <recipient> <image-path> [--trace-ax] [--no-cache] [--keep-window] [--deep-recovery]
+```
+
+- `--trace-ax`: AX 탐색/재시도 로그 출력
+- `--no-cache`: 이번 실행에서 AX path cache 비활성화
+- `-k, --keep-window`: 자동으로 연 채팅창 유지
+- `--deep-recovery`: 빠른 탐색 실패 시 deep recovery 수행
+
+### inspect
+
+```bash
+kmsg inspect [--depth <depth>] [--window <window>] [--show-attributes] [--show-path] [--show-frame] [--show-index] [--show-flags] [--show-actions] [--debug-layout] [--row-summary] [--row-range <start:end>]
+```
+
+- `-d, --depth <depth>`: 최대 탐색 깊이 (기본값: 4)
+- `-w, --window <window>`: inspect 대상 창 인덱스 (기본값: main window)
+- `--show-attributes`: 각 요소의 AX attribute 출력
+- `--show-path`: 각 요소의 AX 경로 출력
+- `--show-frame`: 각 요소 frame 출력
+- `--show-index`: sibling index 출력
+- `--show-flags`: 상태 플래그(`enabled/focused/selected/editable`) 출력
+- `--show-actions`: 지원 AX action 출력
+- `--debug-layout`: `path/frame/index/flags`를 한 번에 켜는 레이아웃 디버그 번들
+- `--row-summary`: 메시지 row 요약 출력
+- `--row-range <start:end>`: `--row-summary` 결과를 특정 범위만 출력 (inclusive, zero-based)
+
+### cache
+
+```bash
+kmsg help cache
+```
+
+- `status` (default): 캐시 상태 출력
+- `clear`: 캐시 삭제
+- `export <output-path>`: 캐시 JSON 내보내기
+- `import <input-path>`: 캐시 JSON 가져오기
+- `warmup [--recipient <recipient>] [--trace-ax] [--keep-window]`: 경로 캐시 워밍업
 
 ## 권한 문제 해결
 
@@ -92,7 +182,7 @@ kmsg read "본인, 친구, 또는 단톡방 이름" --limit 20 --json
 - `chat`: 실제로 읽은 채팅방 제목
 - `fetched_at`: 메시지 수집 시각(ISO-8601 UTC)
 - `count`: 반환된 메시지 개수
-- `messages[].author`: 작성자 이름(추론 불가 시 `null`)
+- `messages[].author`: 작성자 이름 (`(me)`는 내 메시지 또는 작성자 추론이 불가능한 경우)
 - `messages[].time_raw`: UI에서 읽힌 시각 문자열(없으면 `null`)
 - `messages[].body`: 메시지 본문
 
@@ -209,10 +299,19 @@ install -m 755 .build/release/kmsg ~/.local/bin/kmsg
 
 ```bash
 kmsg send "본인, 친구, 또는 단톡방 이름" "테스트" --trace-ax
+kmsg send "본인, 친구, 또는 단톡방 이름" "테스트" --dry-run --trace-ax
+kmsg send "본인, 친구, 또는 단톡방 이름" "테스트" --no-cache
+kmsg send "본인, 친구, 또는 단톡방 이름" "테스트" --refresh-cache
 kmsg send-image "본인, 친구, 또는 단톡방 이름" "/path/to/image.png" --trace-ax
 KMSG_AX_TIMEOUT=0.25 kmsg send "본인, 친구, 또는 단톡방 이름" "테스트"
+kmsg inspect --window 0 --depth 20 --debug-layout
+kmsg inspect --window 0 --depth 20 --row-summary
+kmsg inspect --window 0 --depth 20 --row-summary --row-range 10:35
+kmsg cache status
 kmsg cache warmup --recipient "본인, 친구, 또는 단톡방 이름" --trace-ax
 kmsg cache warmup --recipient "본인, 친구, 또는 단톡방 이름" --keep-window
+kmsg cache export ./ax-cache.json
+kmsg cache import ./ax-cache.json
 kmsg read "본인, 친구, 또는 단톡방 이름" --deep-recovery --trace-ax
 kmsg send "본인, 친구, 또는 단톡방 이름" "테스트" --deep-recovery --trace-ax
 kmsg send-image "본인, 친구, 또는 단톡방 이름" "/path/to/image.png" --deep-recovery --trace-ax --keep-window
@@ -227,7 +326,11 @@ kmsg send-image "본인, 친구, 또는 단톡방 이름" "/path/to/image.png" -
 
 ```bash
 # 1) 대상 채팅창 구조 확인
-kmsg inspect --window 0 --depth 20
+kmsg inspect --window 0 --depth 20 --debug-layout
+
+# 1-1) 메시지 row 파싱 진단
+kmsg inspect --window 0 --depth 20 --row-summary
+kmsg inspect --window 0 --depth 20 --row-summary --row-range 10:30
 
 # 2) 읽기 경로/AX 로그 확인
 kmsg read "본인, 친구, 또는 단톡방 이름" --limit 20 --trace-ax
@@ -238,6 +341,8 @@ kmsg send "본인, 친구, 또는 단톡방 이름" "테스트" --trace-ax --dry
 
 - `AXTextArea, value: "..."` 는 실제 메시지 본문 후보입니다.
 - `AXStaticText, value: "5\n00:27"` 같은 값은 보통 카운트/시간 메타 정보입니다.
+- `--debug-layout`을 켜면 `path/frame/index/flags`가 함께 출력되어 위치 기반 분석이 쉬워집니다.
+- `--row-summary`는 `read` 파서 기준으로 row별 `authorCandidates`, `time`, `buttonTitles`를 빠르게 점검할 때 유용합니다.
 - 이슈 보고 시 `inspect` 출력과 `--trace-ax` 출력을 함께 첨부하면 원인 파악이 빨라집니다.
 
 ### Coding Agent에게 요청하기
