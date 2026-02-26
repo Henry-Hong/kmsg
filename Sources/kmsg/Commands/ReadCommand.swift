@@ -45,6 +45,17 @@ struct ReadCommand: ParsableCommand {
         let frame: CGRect?
     }
 
+    private struct RowAnalysis {
+        let bodyCandidate: MessageBodyCandidate?
+        let metadata: RowMetadata
+        let side: MessageSide
+        let rowFrame: CGRect?
+
+        var referenceFrame: CGRect? {
+            bodyCandidate?.frame ?? rowFrame
+        }
+    }
+
     private enum MessageSide: String, Hashable {
         case left
         case right
@@ -200,33 +211,32 @@ struct ReadCommand: ParsableCommand {
         messageLimit: Int,
         runner: AXActionRunner
     ) -> [UIElement] {
-        let targetRowCount = max(messageLimit * 6, 60)
-        var rows = transcriptRoot.findAll(role: kAXRowRole, limit: targetRowCount, maxNodes: 1_200)
+        let targetRowCount = max(messageLimit * 8, 80)
+        var rows: [UIElement] = []
 
-        if rows.isEmpty {
-            let tables = transcriptRoot.findAll(role: kAXTableRole, limit: 4, maxNodes: 300)
-            let outlines = transcriptRoot.findAll(role: kAXOutlineRole, limit: 4, maxNodes: 300)
-            let lists = transcriptRoot.findAll(role: kAXListRole, limit: 4, maxNodes: 300)
+        // Prefer direct row children from transcript containers to avoid BFS early-stop bias.
+        rows.append(contentsOf: directRowChildren(from: transcriptRoot))
 
-            for table in tables {
-                let remaining = targetRowCount - rows.count
-                if remaining <= 0 { break }
-                rows.append(contentsOf: table.findAll(role: kAXRowRole, limit: remaining, maxNodes: 320))
-            }
-            for outline in outlines {
-                let remaining = targetRowCount - rows.count
-                if remaining <= 0 { break }
-                rows.append(contentsOf: outline.findAll(role: kAXRowRole, limit: remaining, maxNodes: 320))
-            }
-            for list in lists {
-                let remaining = targetRowCount - rows.count
-                if remaining <= 0 { break }
-                rows.append(contentsOf: list.findAll(role: kAXRowRole, limit: remaining, maxNodes: 320))
-            }
+        let containerCandidates = transcriptRoot.findAll(where: { element in
+            guard let role = element.role else { return false }
+            return role == kAXTableRole || role == kAXOutlineRole || role == kAXListRole || role == kAXScrollAreaRole
+        }, limit: 8, maxNodes: 900)
+
+        for container in containerCandidates {
+            rows.append(contentsOf: directRowChildren(from: container))
+        }
+
+        if rows.count < targetRowCount {
+            let bfsRows = transcriptRoot.findAll(
+                role: kAXRowRole,
+                limit: max(targetRowCount * 3, 240),
+                maxNodes: 3_000
+            )
+            rows.append(contentsOf: bfsRows)
         }
 
         if rows.isEmpty {
-            let cells = transcriptRoot.findAll(role: kAXCellRole, limit: max(targetRowCount * 2, 120), maxNodes: 1_000)
+            let cells = transcriptRoot.findAll(role: kAXCellRole, limit: max(targetRowCount * 2, 160), maxNodes: 2_000)
             rows.append(contentsOf: cells.compactMap(\.parent))
         }
 
@@ -250,8 +260,10 @@ struct ReadCommand: ParsableCommand {
             return lhsY < rhsY
         }
 
-        runner.log("read: transcript rows raw=\(rows.count), unique=\(deduplicated.count), filtered=\(sorted.count)")
-        return sorted
+        let recentWindow = max(messageLimit * 12, 160)
+        let recentRows = Array(sorted.suffix(recentWindow))
+        runner.log("read: transcript rows raw=\(rows.count), unique=\(deduplicated.count), filtered=\(sorted.count), recent=\(recentRows.count)")
+        return recentRows
     }
 
     private func extractMessages(
@@ -260,29 +272,27 @@ struct ReadCommand: ParsableCommand {
         limit: Int,
         runner: AXActionRunner
     ) -> [ReadMessage] {
+        let analyses = rows.map { analyzeRow($0, transcriptRoot: transcriptRoot, runner: runner) }
+        let transcriptFrame = transcriptRoot.frame
+        let otherAnchorRatio = computeOtherAnchorRatio(from: analyses, transcriptFrame: transcriptFrame)
+
         var messages: [ReadMessage] = []
-        messages.reserveCapacity(min(rows.count, limit * 2))
+        messages.reserveCapacity(min(analyses.count, limit * 2))
         var selectedLogs = 0
         var skippedLogs = 0
-        var leftAuthor: String?
-        var rightAuthor: String?
         var lastKnownTime: String?
         var lastTimeBySide: [MessageSide: String] = [:]
-
-        for (offset, row) in rows.suffix(max(limit * 4, limit)).enumerated() {
-            if let bodyCandidate = extractMessageBody(from: row, runner: runner) {
-                let metadata = extractRowMetadata(from: row)
-                let side = inferMessageSide(
-                    bodyFrame: bodyCandidate.frame,
-                    row: row,
-                    transcriptRoot: transcriptRoot
+        for (offset, analysis) in analyses.enumerated() {
+            if let bodyCandidate = analysis.bodyCandidate {
+                let metadata = analysis.metadata
+                let side = analysis.side
+                let resolvedAuthor = resolveAuthorFromContext(
+                    at: offset,
+                    analyses: analyses,
+                    transcriptFrame: transcriptFrame,
+                    otherAnchorRatio: otherAnchorRatio
                 )
-                let author = resolveAuthor(
-                    explicitAuthor: metadata.author,
-                    side: side,
-                    leftAuthor: &leftAuthor,
-                    rightAuthor: &rightAuthor
-                )
+                let author = resolvedAuthor.author
 
                 let resolvedTime: String?
                 if let explicitTime = metadata.timeRaw {
@@ -305,7 +315,7 @@ struct ReadCommand: ParsableCommand {
                 messages.append(message)
                 if selectedLogs < 10 {
                     runner.log(
-                        "read: row[\(offset + 1)] side=\(side.rawValue) author='\(author ?? "unknown")' time='\(resolvedTime ?? "unknown")' body='\(bodyCandidate.body.prefix(60))'"
+                        "read: row[\(offset + 1)] side=\(side.rawValue) author='\(author ?? "(me)")' source=\(resolvedAuthor.source) time='\(resolvedTime ?? "unknown")' body='\(bodyCandidate.body.prefix(60))'"
                     )
                     selectedLogs += 1
                 }
@@ -324,6 +334,86 @@ struct ReadCommand: ParsableCommand {
         }
 
         return Array(deduplicateMessagesPreservingOrder(messages).suffix(limit))
+    }
+
+    private func directRowChildren(from element: UIElement) -> [UIElement] {
+        element.children.filter { $0.role == kAXRowRole }
+    }
+
+    private func analyzeRow(_ row: UIElement, transcriptRoot: UIElement, runner: AXActionRunner) -> RowAnalysis {
+        let directCells = row.children.filter { $0.role == kAXCellRole }
+        let containers = directCells.isEmpty ? [row] : directCells
+
+        var bodyCandidates: [MessageBodyCandidate] = []
+        var metadataTokensBuffer: [String] = []
+        var imageFrames: [CGRect] = []
+
+        for container in containers {
+            let directChildren = container.children
+
+            var textAreas = directChildren.filter { $0.role == kAXTextAreaRole }
+            if textAreas.isEmpty {
+                textAreas = container.findAll(role: kAXTextAreaRole, limit: 4, maxNodes: 120)
+            }
+
+            var staticTexts = directChildren.filter { $0.role == kAXStaticTextRole }
+            if staticTexts.isEmpty {
+                staticTexts = container.findAll(role: kAXStaticTextRole, limit: 8, maxNodes: 140)
+            }
+
+            var images = directChildren.filter { $0.role == kAXImageRole }
+            if images.isEmpty {
+                images = container.findAll(role: kAXImageRole, limit: 3, maxNodes: 90)
+            }
+
+            for staticText in staticTexts {
+                let normalized = normalizeBodyText(staticText.stringValue)
+                guard !normalized.isEmpty else { continue }
+                metadataTokensBuffer.append(contentsOf: metadataTokens(from: normalized))
+            }
+
+            for image in images {
+                if let frame = image.frame {
+                    imageFrames.append(frame)
+                }
+            }
+
+            for textArea in textAreas {
+                let normalized = normalizeBodyText(textArea.stringValue)
+                guard !normalized.isEmpty else { continue }
+
+                var resolved = normalized
+                if shouldPromoteLinkTitle(for: normalized),
+                   let fullLink = bestLinkTitle(from: textArea) ?? bestLinkTitle(from: container)
+                {
+                    if isURLOnlyText(normalized) {
+                        resolved = fullLink
+                    } else if !normalized.contains(fullLink) {
+                        resolved = "\(normalized)\n\(fullLink)"
+                    }
+                    runner.log("read: link title used as fallback")
+                }
+
+                bodyCandidates.append(MessageBodyCandidate(body: resolved, frame: textArea.frame))
+            }
+
+            if textAreas.isEmpty, let linkOnlyText = bestLinkTitle(from: container) {
+                bodyCandidates.append(MessageBodyCandidate(body: linkOnlyText, frame: container.frame))
+            }
+        }
+
+        let bestBody = deduplicateBodyCandidates(bodyCandidates).max { lhs, rhs in
+            scoreBodyCandidate(lhs.body) < scoreBodyCandidate(rhs.body)
+        }
+
+        let metadata = parseRowMetadata(tokens: metadataTokensBuffer)
+        let side = inferMessageSide(
+            bodyFrame: bestBody?.frame,
+            imageFrames: imageFrames,
+            rowFrame: row.frame,
+            transcriptRoot: transcriptRoot
+        )
+        return RowAnalysis(bodyCandidate: bestBody, metadata: metadata, side: side, rowFrame: row.frame)
     }
 
     private func extractMessageBody(from row: UIElement, runner: AXActionRunner) -> MessageBodyCandidate? {
@@ -366,8 +456,9 @@ struct ReadCommand: ParsableCommand {
 
     private func extractFallbackMessages(from transcriptRoot: UIElement, limit: Int, runner: AXActionRunner) -> [ReadMessage] {
         var messages: [ReadMessage] = []
-        let textAreas = transcriptRoot.findAll(role: kAXTextAreaRole, limit: max(limit * 24, 240), maxNodes: 1_800)
-        for textArea in textAreas {
+        let textAreas = transcriptRoot.findAll(role: kAXTextAreaRole, limit: max(limit * 80, 1_200), maxNodes: 6_000)
+        let recentTextAreas = Array(sortElementsByReadingOrder(textAreas).suffix(max(limit * 20, 240)))
+        for textArea in recentTextAreas {
             let normalized = normalizeBodyText(textArea.stringValue)
             guard !normalized.isEmpty else { continue }
 
@@ -386,8 +477,9 @@ struct ReadCommand: ParsableCommand {
         }
 
         if messages.isEmpty {
-            let links = transcriptRoot.findAll(where: { $0.role == kAXLinkRole }, limit: max(limit * 8, 60), maxNodes: 1_200)
-            for link in links {
+            let links = transcriptRoot.findAll(where: { $0.role == kAXLinkRole }, limit: max(limit * 40, 320), maxNodes: 4_000)
+            let recentLinks = Array(sortElementsByReadingOrder(links).suffix(max(limit * 10, 80)))
+            for link in recentLinks {
                 let title = normalizeBodyText(link.title ?? link.stringValue)
                 if !title.isEmpty {
                     messages.append(ReadMessage(author: nil, timeRaw: nil, body: title))
@@ -412,6 +504,10 @@ struct ReadCommand: ParsableCommand {
             }
         }
 
+        return parseRowMetadata(tokens: tokens)
+    }
+
+    private func parseRowMetadata(tokens: [String]) -> RowMetadata {
         let uniqueTokens = deduplicatePreservingOrder(tokens)
         var author: String?
         var timeRaw: String?
@@ -491,13 +587,15 @@ struct ReadCommand: ParsableCommand {
         return false
     }
 
-    private func inferMessageSide(bodyFrame: CGRect?, row: UIElement, transcriptRoot: UIElement) -> MessageSide {
+    private func inferMessageSide(
+        bodyFrame: CGRect?,
+        imageFrames: [CGRect],
+        rowFrame: CGRect?,
+        transcriptRoot: UIElement
+    ) -> MessageSide {
         // Primary: AXImage(프로필) 위치 대비 body text 위치로 판단
         if let bodyF = bodyFrame {
-            let cell = row.findAll(role: kAXCellRole, limit: 1, maxNodes: 20).first ?? row
-            let images = cell.findAll(role: kAXImageRole, limit: 4, maxNodes: 80)
-            for image in images {
-                guard let imageFrame = image.frame else { continue }
+            for imageFrame in imageFrames {
                 if imageFrame.midX + 10 < bodyF.minX {
                     return .left
                 }
@@ -508,7 +606,7 @@ struct ReadCommand: ParsableCommand {
         }
 
         // Fallback: midX ratio 방식
-        let referenceFrame = bodyFrame ?? row.frame
+        let referenceFrame = bodyFrame ?? rowFrame
         guard let candidateFrame = referenceFrame, let transcriptFrame = transcriptRoot.frame else {
             return .unknown
         }
@@ -523,36 +621,111 @@ struct ReadCommand: ParsableCommand {
         return .unknown
     }
 
-    private func resolveAuthor(
-        explicitAuthor: String?,
-        side: MessageSide,
-        leftAuthor: inout String?,
-        rightAuthor: inout String?
-    ) -> String? {
-        if let explicitAuthor {
-            switch side {
-            case .left:
-                leftAuthor = explicitAuthor
-            case .right:
-                rightAuthor = explicitAuthor
-            case .unknown:
-                if leftAuthor == nil {
-                    leftAuthor = explicitAuthor
-                } else if rightAuthor == nil {
-                    rightAuthor = explicitAuthor
-                }
-            }
-            return explicitAuthor
+    private func computeOtherAnchorRatio(from analyses: [RowAnalysis], transcriptFrame: CGRect?) -> CGFloat? {
+        guard let transcriptFrame, transcriptFrame.width > 0 else { return nil }
+
+        var ratios: [CGFloat] = []
+        ratios.reserveCapacity(analyses.count)
+        for analysis in analyses {
+            guard analysis.metadata.author != nil else { continue }
+            guard let ratio = normalizedMidXRatio(for: analysis, transcriptFrame: transcriptFrame) else { continue }
+            ratios.append(ratio)
+        }
+        guard !ratios.isEmpty else { return nil }
+
+        ratios.sort()
+        return ratios[ratios.count / 2]
+    }
+
+    private func resolveAuthorFromContext(
+        at index: Int,
+        analyses: [RowAnalysis],
+        transcriptFrame: CGRect?,
+        otherAnchorRatio: CGFloat?
+    ) -> (author: String?, source: String) {
+        let analysis = analyses[index]
+        if let explicitAuthor = analysis.metadata.author {
+            return (explicitAuthor, "explicit")
         }
 
-        switch side {
-        case .left:
-            return leftAuthor
-        case .right:
-            return rightAuthor
-        case .unknown:
-            return leftAuthor ?? rightAuthor
+        let rowRatio = normalizedMidXRatio(for: analysis, transcriptFrame: transcriptFrame)
+        let likelyOtherByAnchor: Bool
+        if let rowRatio, let anchor = otherAnchorRatio {
+            likelyOtherByAnchor = abs(rowRatio - anchor) <= 0.085
+        } else {
+            likelyOtherByAnchor = false
         }
+
+        let likelyOther = likelyOtherByAnchor || analysis.side == .left
+        if !likelyOther {
+            return (nil, "default-me")
+        }
+
+        var bestAuthor: String?
+        var bestScore = Int.min
+
+        let start = max(0, index - 3)
+        let end = min(analyses.count - 1, index + 2)
+        for neighborIndex in start...end {
+            guard neighborIndex != index else { continue }
+            let neighbor = analyses[neighborIndex]
+            guard let candidateAuthor = neighbor.metadata.author else { continue }
+
+            var score = 0
+            let distance = abs(neighborIndex - index)
+            score += max(0, 4 - distance)
+
+            if analysis.side != .unknown, neighbor.side == analysis.side {
+                score += 3
+            }
+
+            if let rowY = analysis.referenceFrame?.minY,
+               let candidateY = neighbor.referenceFrame?.minY
+            {
+                let deltaY = abs(rowY - candidateY)
+                if deltaY <= 150 { score += 2 }
+                if deltaY <= 70 { score += 1 }
+            }
+
+            if let rowTime = analysis.metadata.timeRaw,
+               let candidateTime = neighbor.metadata.timeRaw,
+               rowTime == candidateTime
+            {
+                score += 1
+            }
+
+            if neighbor.bodyCandidate == nil {
+                score += 1
+            }
+
+            if let rowRatio,
+               let candidateRatio = normalizedMidXRatio(for: neighbor, transcriptFrame: transcriptFrame),
+               let anchor = otherAnchorRatio
+            {
+                if abs(rowRatio - candidateRatio) <= 0.08 {
+                    score += 1
+                }
+                if abs(candidateRatio - anchor) <= 0.10 {
+                    score += 1
+                }
+            }
+
+            if score > bestScore {
+                bestScore = score
+                bestAuthor = candidateAuthor
+            }
+        }
+
+        if let bestAuthor, bestScore >= 6 {
+            return (bestAuthor, "context")
+        }
+
+        return (nil, "default-me")
+    }
+
+    private func normalizedMidXRatio(for analysis: RowAnalysis, transcriptFrame: CGRect?) -> CGFloat? {
+        guard let transcriptFrame, transcriptFrame.width > 0, let frame = analysis.referenceFrame else { return nil }
+        return (frame.midX - transcriptFrame.minX) / transcriptFrame.width
     }
 
     private func firstAncestor(of element: UIElement, role: String, maxHops: Int) -> UIElement? {
@@ -688,14 +861,33 @@ struct ReadCommand: ParsableCommand {
     private func deduplicateElements(_ elements: [UIElement]) -> [UIElement] {
         var unique: [UIElement] = []
         unique.reserveCapacity(elements.count)
+
+        var buckets: [CFHashCode: [UIElement]] = [:]
         for element in elements {
-            if unique.contains(where: { existing in
+            let hash = CFHash(element.axElement)
+            let alreadySeen = buckets[hash]?.contains(where: { existing in
                 CFEqual(existing.axElement, element.axElement)
-            }) {
+            }) ?? false
+            if alreadySeen {
                 continue
             }
+            buckets[hash, default: []].append(element)
             unique.append(element)
         }
+
         return unique
+    }
+
+    private func sortElementsByReadingOrder(_ elements: [UIElement]) -> [UIElement] {
+        elements.sorted { lhs, rhs in
+            let lhsY = lhs.frame?.minY ?? .greatestFiniteMagnitude
+            let rhsY = rhs.frame?.minY ?? .greatestFiniteMagnitude
+            if lhsY == rhsY {
+                let lhsX = lhs.frame?.minX ?? .greatestFiniteMagnitude
+                let rhsX = rhs.frame?.minX ?? .greatestFiniteMagnitude
+                return lhsX < rhsX
+            }
+            return lhsY < rhsY
+        }
     }
 }

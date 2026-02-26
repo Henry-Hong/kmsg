@@ -582,7 +582,7 @@ struct ChatWindowResolver {
 
         if tryActivateSearchResult(result, label: "result") {
             didTriggerAction = true
-            if runner.waitUntil(label: "search open confirm", timeout: 0.3, pollInterval: 0.05, evaluateAfterTimeout: false, condition: opened) {
+            if runner.waitUntil(label: "search open confirm", timeout: 0.24, pollInterval: 0.05, evaluateAfterTimeout: false, condition: opened) {
                 return true
             }
         }
@@ -595,21 +595,25 @@ struct ChatWindowResolver {
         }
         didTriggerAction = didTriggerAction || selected
         if selected,
-           runner.waitUntil(label: "search open confirm", timeout: 0.18, pollInterval: 0.05, evaluateAfterTimeout: false, condition: opened)
+           runner.waitUntil(label: "search open confirm", timeout: 0.14, pollInterval: 0.05, evaluateAfterTimeout: false, condition: opened)
         {
             return true
         }
 
-        kakao.activate()
-        if runner.focusWithVerification(searchField, label: "search field confirm", attempts: 1) {
-            runner.log("search: fallback confirm via Enter")
-            runner.pressEnterKey()
-            didTriggerAction = true
-            if runner.waitUntil(label: "search open confirm", timeout: 0.28, pollInterval: 0.05, evaluateAfterTimeout: false, condition: opened) {
-                return true
+        if selected {
+            kakao.activate()
+            if runner.focusWithVerification(searchField, label: "search field confirm", attempts: 1) {
+                runner.log("search: fallback confirm via Enter")
+                runner.pressEnterKey()
+                didTriggerAction = true
+                if runner.waitUntil(label: "search open confirm", timeout: 0.18, pollInterval: 0.05, evaluateAfterTimeout: false, condition: opened) {
+                    return true
+                }
+            } else {
+                runner.log("search: fallback confirm skipped (search field focus failed)")
             }
         } else {
-            runner.log("search: fallback confirm skipped (search field focus failed)")
+            runner.log("search: skipping Enter fallback because result selection was not available")
         }
 
         kakao.activate()
@@ -619,7 +623,7 @@ struct ChatWindowResolver {
             Thread.sleep(forTimeInterval: 0.03)
             runner.pressEnterKey()
             didTriggerAction = true
-            if runner.waitUntil(label: "search open confirm", timeout: 0.32, pollInterval: 0.05, evaluateAfterTimeout: false, condition: opened) {
+            if runner.waitUntil(label: "search open confirm", timeout: 0.22, pollInterval: 0.05, evaluateAfterTimeout: false, condition: opened) {
                 return true
             }
         } else {
