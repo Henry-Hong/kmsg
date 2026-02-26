@@ -46,7 +46,8 @@ struct ReadCommand: ParsableCommand {
 
     static let configuration = CommandConfiguration(
         commandName: "read",
-        abstract: "Read messages from a chat"
+        abstract: "Read messages from a chat",
+        discussion: "When author is null, the message was sent by you."
     )
 
     @Argument(help: "Name of the chat to read from (partial match supported)")
