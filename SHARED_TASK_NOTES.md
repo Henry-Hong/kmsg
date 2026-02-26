@@ -16,11 +16,13 @@ Run: `.build/debug/kmsg`
 ## KakaoTalk UI Structure (discovered via inspect)
 
 Main window (`id: Main Window`):
+
 - Navigation buttons: `id: friends`, `id: chatrooms`, `id: more`
 - Unread count: `AXStaticText` with value like "999+"
 - Content area: `AXScrollArea > AXTable > AXRow > AXCell`
 
-Chat window (e.g., `title: "인호 원일 요섭 재균"`):
+Chat window (e.g., `title: "홍길동"`):
+
 - Messages: `AXScrollArea > AXTable > AXRow` structure
 - Input: Look for `AXTextArea` or `AXTextField`
 
