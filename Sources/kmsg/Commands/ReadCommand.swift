@@ -284,14 +284,12 @@ struct ReadCommand: ParsableCommand {
         var lastTimeBySide: [MessageSide: String] = [:]
         var leftAnchorAuthor: String?
         var leftAnchorTimeRaw: String?
-        var leftAnchorIndex: Int?
 
         for (offset, analysis) in analyses.enumerated() {
             let side = analysis.side
-            if side != .left {
+            if side != .left || analysis.isSystemLikeRow {
                 leftAnchorAuthor = nil
                 leftAnchorTimeRaw = nil
-                leftAnchorIndex = nil
             }
 
             if side == .left,
@@ -300,7 +298,6 @@ struct ReadCommand: ParsableCommand {
             {
                 leftAnchorAuthor = explicitAuthor
                 leftAnchorTimeRaw = analysis.timeRaw
-                leftAnchorIndex = offset
             }
 
             guard let bodyCandidate = analysis.bodyCandidate else {
@@ -325,10 +322,8 @@ struct ReadCommand: ParsableCommand {
 
             let resolvedAuthor = resolveAuthorInSegment(
                 analysis: analysis,
-                index: offset,
                 leftAnchorAuthor: leftAnchorAuthor,
-                leftAnchorTimeRaw: leftAnchorTimeRaw,
-                leftAnchorIndex: leftAnchorIndex
+                leftAnchorTimeRaw: leftAnchorTimeRaw
             )
             let author = resolvedAuthor.author
 
@@ -738,10 +733,8 @@ struct ReadCommand: ParsableCommand {
 
     private func resolveAuthorInSegment(
         analysis: RowAnalysis,
-        index: Int,
         leftAnchorAuthor: String?,
-        leftAnchorTimeRaw: String?,
-        leftAnchorIndex: Int?
+        leftAnchorTimeRaw: String?
     ) -> (author: String?, source: String) {
         if let explicitAuthor = analysis.explicitAuthor {
             return (explicitAuthor, "explicit")
@@ -751,12 +744,7 @@ struct ReadCommand: ParsableCommand {
             return (nil, "default-me")
         }
 
-        guard
-            let anchorAuthor = leftAnchorAuthor,
-            let anchorIndex = leftAnchorIndex,
-            index >= anchorIndex,
-            index - anchorIndex <= 2
-        else {
+        guard let anchorAuthor = leftAnchorAuthor else {
             return (nil, "left-unresolved")
         }
 
