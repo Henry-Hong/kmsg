@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""MCP stdio server that exposes kmsg read/send tools for OpenClaw.
+"""MCP stdio server that exposes kmsg read/send/send-image tools for OpenClaw.
 
 This server intentionally uses only Python's standard library so it can run
 without extra package installation.
@@ -255,7 +255,7 @@ class OpenClawKmsgMCPServer:
             },
             {
                 "name": "kmsg_send",
-                "description": "Send a KakaoTalk message via kmsg. Requires explicit confirmation.",
+                "description": "Send a KakaoTalk message via kmsg. Default sends immediately; confirm=true triggers confirmation-required response.",
                 "inputSchema": {
                     "type": "object",
                     "properties": {
@@ -264,7 +264,7 @@ class OpenClawKmsgMCPServer:
                         "confirm": {
                             "type": "boolean",
                             "default": False,
-                            "description": "Must be true to allow sending",
+                            "description": "If true, do not send and return CONFIRMATION_REQUIRED",
                         },
                         "deep_recovery": {
                             "type": "boolean",
@@ -283,6 +283,39 @@ class OpenClawKmsgMCPServer:
                         },
                     },
                     "required": ["chat", "message"],
+                    "additionalProperties": False,
+                },
+            },
+            {
+                "name": "kmsg_send_image",
+                "description": "Send an image to a KakaoTalk chat via kmsg. Default sends immediately; confirm=true triggers confirmation-required response.",
+                "inputSchema": {
+                    "type": "object",
+                    "properties": {
+                        "chat": {"type": "string", "description": "Chat room or user name"},
+                        "image_path": {"type": "string", "description": "Path to the image file"},
+                        "confirm": {
+                            "type": "boolean",
+                            "default": False,
+                            "description": "If true, do not send and return CONFIRMATION_REQUIRED",
+                        },
+                        "deep_recovery": {
+                            "type": "boolean",
+                            "default": self.defaults["deep_recovery"],
+                            "description": "Enable deep recovery mode for window resolution",
+                        },
+                        "keep_window": {
+                            "type": "boolean",
+                            "default": False,
+                            "description": "Keep auto-opened KakaoTalk window",
+                        },
+                        "trace_ax": {
+                            "type": "boolean",
+                            "default": self.defaults["trace_ax"],
+                            "description": "Include AX tracing logs",
+                        },
+                    },
+                    "required": ["chat", "image_path"],
                     "additionalProperties": False,
                 },
             },
@@ -458,11 +491,11 @@ class OpenClawKmsgMCPServer:
                 latency_ms=0,
             )
 
-        if not confirm:
+        if confirm:
             return self._error_payload(
                 code="CONFIRMATION_REQUIRED",
-                message="kmsg_send requires explicit confirm=true",
-                hint="Ask user for explicit approval, then call again with confirm=true.",
+                message="kmsg_send blocked because confirm=true requests pre-send confirmation",
+                hint="Ask user for explicit approval, then call again with confirm=false (or omit confirm).",
                 raw_stdout="",
                 raw_stderr="",
                 latency_ms=0,
@@ -520,6 +553,93 @@ class OpenClawKmsgMCPServer:
 
         return response
 
+    def _call_kmsg_send_image(self, arguments: JSONDict) -> JSONDict:
+        chat = str(arguments.get("chat", "")).strip()
+        image_path = str(arguments.get("image_path", "")).strip()
+        confirm = bool(arguments.get("confirm", False))
+
+        if not chat or not image_path:
+            return self._error_payload(
+                code="INVALID_ARGUMENT",
+                message="chat and image_path are required",
+                hint="Provide both chat and image_path.",
+                raw_stdout="",
+                raw_stderr="",
+                latency_ms=0,
+            )
+
+        if confirm:
+            return self._error_payload(
+                code="CONFIRMATION_REQUIRED",
+                message="kmsg_send_image blocked because confirm=true requests pre-send confirmation",
+                hint="Ask user for explicit approval, then call again with confirm=false (or omit confirm).",
+                raw_stdout="",
+                raw_stderr="",
+                latency_ms=0,
+            )
+
+        if not os.path.isfile(image_path):
+            return self._error_payload(
+                code="INVALID_ARGUMENT",
+                message="image_path must point to an existing file",
+                hint="Provide a valid local image file path.",
+                raw_stdout="",
+                raw_stderr="",
+                latency_ms=0,
+            )
+
+        deep_recovery = bool(arguments.get("deep_recovery", self.defaults["deep_recovery"]))
+        keep_window = bool(arguments.get("keep_window", False))
+        trace_ax = bool(arguments.get("trace_ax", self.defaults["trace_ax"]))
+
+        cmd = [self.runner.kmsg_bin, "send-image", chat, image_path]
+        if deep_recovery:
+            cmd.append("--deep-recovery")
+        if keep_window:
+            cmd.append("--keep-window")
+        if trace_ax:
+            cmd.append("--trace-ax")
+
+        timeout_sec = 20.0 if deep_recovery else 12.0
+        run = self.runner.run(cmd, timeout_sec=timeout_sec)
+
+        if run.timed_out:
+            return self._error_payload(
+                code="PROCESS_TIMEOUT",
+                message="kmsg send-image timed out",
+                hint="Retry after ensuring KakaoTalk is responsive.",
+                raw_stdout=run.stdout,
+                raw_stderr=run.stderr,
+                latency_ms=run.latency_ms,
+            )
+
+        if run.returncode != 0:
+            combined = f"{run.stdout}\n{run.stderr}"
+            code = self._extract_error_code(combined)
+            return self._error_payload(
+                code=code,
+                message="kmsg send-image failed",
+                hint=self._map_hint(code),
+                raw_stdout=run.stdout,
+                raw_stderr=run.stderr,
+                latency_ms=run.latency_ms,
+            )
+
+        response: JSONDict = {
+            "ok": True,
+            "chat": chat,
+            "sent": True,
+            "meta": {
+                "latency_ms": run.latency_ms,
+                "stdout": run.stdout,
+            },
+        }
+
+        if trace_ax and run.stderr.strip():
+            response["meta"]["stderr_trace"] = run.stderr
+
+        return response
+
     def _handle_tools_call(self, arguments: JSONDict) -> JSONDict:
         name = arguments.get("name")
         call_args = arguments.get("arguments", {})
@@ -530,6 +650,8 @@ class OpenClawKmsgMCPServer:
             result_obj = self._call_kmsg_read(call_args)
         elif name == "kmsg_send":
             result_obj = self._call_kmsg_send(call_args)
+        elif name == "kmsg_send_image":
+            result_obj = self._call_kmsg_send_image(call_args)
         else:
             raise MCPError(code=-32601, message=f"Unknown tool: {name}")
 
@@ -560,7 +682,11 @@ class OpenClawKmsgMCPServer:
                         "name": "openclaw-kmsg-mcp",
                         "version": self.server_version,
                     },
-                    "instructions": "Use kmsg_read for read-only operations and kmsg_send with confirm=true for sending.",
+                    "instructions": (
+                        "Use kmsg_read for read-only operations. "
+                        "Use kmsg_send and kmsg_send_image with confirm=false (or omitted) for sending. "
+                        "Use confirm=true to intentionally require a confirmation step."
+                    ),
                     "meta": {
                         "startup_check": detail,
                     },
