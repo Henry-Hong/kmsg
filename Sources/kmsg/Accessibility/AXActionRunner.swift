@@ -180,6 +180,26 @@ struct AXActionRunner {
         return false
     }
 
+    @discardableResult
+    func clickWithRetry(
+        _ element: UIElement,
+        label: String,
+        attempts: Int = 3,
+        retryDelay: TimeInterval = 0.2
+    ) -> Bool {
+        for attempt in 1...attempts {
+            do {
+                try element.press()
+                log("\(label): clicked on attempt \(attempt)")
+                return true
+            } catch {
+                log("\(label): click attempt \(attempt) failed (\(error))")
+                Thread.sleep(forTimeInterval: retryDelay)
+            }
+        }
+        return false
+    }
+
     func pressEscape() {
         pressKey(code: 53)
     }
@@ -194,6 +214,10 @@ struct AXActionRunner {
 
     func pressCommandW() {
         pressKey(code: 13, flags: .maskCommand) // W
+    }
+
+    func pressPaste() {
+        pressKey(code: 9, flags: .maskCommand) // V
     }
 
     private func typeText(_ text: String, perCharacterDelay: TimeInterval) {
