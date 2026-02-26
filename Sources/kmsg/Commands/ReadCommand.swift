@@ -47,9 +47,11 @@ struct ReadCommand: ParsableCommand {
 
     private struct RowAnalysis {
         let bodyCandidate: MessageBodyCandidate?
-        let metadata: RowMetadata
+        let explicitAuthor: String?
+        let timeRaw: String?
         let side: MessageSide
         let rowFrame: CGRect?
+        let isSystemLikeRow: Bool
 
         var referenceFrame: CGRect? {
             bodyCandidate?.frame ?? rowFrame
@@ -273,8 +275,6 @@ struct ReadCommand: ParsableCommand {
         runner: AXActionRunner
     ) -> [ReadMessage] {
         let analyses = rows.map { analyzeRow($0, transcriptRoot: transcriptRoot, runner: runner) }
-        let transcriptFrame = transcriptRoot.frame
-        let otherAnchorRatio = computeOtherAnchorRatio(from: analyses, transcriptFrame: transcriptFrame)
 
         var messages: [ReadMessage] = []
         messages.reserveCapacity(min(analyses.count, limit * 2))
@@ -282,46 +282,80 @@ struct ReadCommand: ParsableCommand {
         var skippedLogs = 0
         var lastKnownTime: String?
         var lastTimeBySide: [MessageSide: String] = [:]
+        var leftAnchorAuthor: String?
+        var leftAnchorTimeRaw: String?
+        var leftAnchorIndex: Int?
+
         for (offset, analysis) in analyses.enumerated() {
-            if let bodyCandidate = analysis.bodyCandidate {
-                let metadata = analysis.metadata
-                let side = analysis.side
-                let resolvedAuthor = resolveAuthorFromContext(
-                    at: offset,
-                    analyses: analyses,
-                    transcriptFrame: transcriptFrame,
-                    otherAnchorRatio: otherAnchorRatio
-                )
-                let author = resolvedAuthor.author
+            let side = analysis.side
+            if side != .left {
+                leftAnchorAuthor = nil
+                leftAnchorTimeRaw = nil
+                leftAnchorIndex = nil
+            }
 
-                let resolvedTime: String?
-                if let explicitTime = metadata.timeRaw {
-                    resolvedTime = explicitTime
-                    lastKnownTime = explicitTime
-                    if side != .unknown {
-                        lastTimeBySide[side] = explicitTime
+            if side == .left,
+               let explicitAuthor = analysis.explicitAuthor,
+               !analysis.isSystemLikeRow
+            {
+                leftAnchorAuthor = explicitAuthor
+                leftAnchorTimeRaw = analysis.timeRaw
+                leftAnchorIndex = offset
+            }
+
+            guard let bodyCandidate = analysis.bodyCandidate else {
+                if skippedLogs < 10 {
+                    if analysis.isSystemLikeRow {
+                        runner.log("read: row[\(offset + 1)] skipped (system row)")
+                    } else {
+                        runner.log("read: row[\(offset + 1)] skipped (no body text)")
                     }
-                } else if side != .unknown, let sideTime = lastTimeBySide[side] {
-                    resolvedTime = sideTime
-                } else {
-                    resolvedTime = lastKnownTime
+                    skippedLogs += 1
                 }
+                continue
+            }
 
-                let message = ReadMessage(
-                    author: author,
-                    timeRaw: resolvedTime,
-                    body: bodyCandidate.body
-                )
-                messages.append(message)
-                if selectedLogs < 10 {
-                    runner.log(
-                        "read: row[\(offset + 1)] side=\(side.rawValue) author='\(author ?? "(me)")' source=\(resolvedAuthor.source) time='\(resolvedTime ?? "unknown")' body='\(bodyCandidate.body.prefix(60))'"
-                    )
-                    selectedLogs += 1
+            if analysis.isSystemLikeRow {
+                if skippedLogs < 10 {
+                    runner.log("read: row[\(offset + 1)] skipped (system-like content)")
+                    skippedLogs += 1
                 }
-            } else if skippedLogs < 10 {
-                runner.log("read: row[\(offset + 1)] skipped (no body text)")
-                skippedLogs += 1
+                continue
+            }
+
+            let resolvedAuthor = resolveAuthorInSegment(
+                analysis: analysis,
+                index: offset,
+                leftAnchorAuthor: leftAnchorAuthor,
+                leftAnchorTimeRaw: leftAnchorTimeRaw,
+                leftAnchorIndex: leftAnchorIndex
+            )
+            let author = resolvedAuthor.author
+
+            let resolvedTime: String?
+            if let explicitTime = analysis.timeRaw {
+                resolvedTime = explicitTime
+                lastKnownTime = explicitTime
+                if side != .unknown {
+                    lastTimeBySide[side] = explicitTime
+                }
+            } else if side != .unknown, let sideTime = lastTimeBySide[side] {
+                resolvedTime = sideTime
+            } else {
+                resolvedTime = lastKnownTime
+            }
+
+            let message = ReadMessage(
+                author: author,
+                timeRaw: resolvedTime,
+                body: bodyCandidate.body
+            )
+            messages.append(message)
+            if selectedLogs < 10 {
+                runner.log(
+                    "read: row[\(offset + 1)] side=\(side.rawValue) author='\(author ?? "(me)")' source=\(resolvedAuthor.source) time='\(resolvedTime ?? "unknown")' body='\(bodyCandidate.body.prefix(60))'"
+                )
+                selectedLogs += 1
             }
         }
 
@@ -346,6 +380,7 @@ struct ReadCommand: ParsableCommand {
 
         var bodyCandidates: [MessageBodyCandidate] = []
         var metadataTokensBuffer: [String] = []
+        var buttonTitlesBuffer: [String] = []
         var imageFrames: [CGRect] = []
 
         for container in containers {
@@ -366,10 +401,21 @@ struct ReadCommand: ParsableCommand {
                 images = container.findAll(role: kAXImageRole, limit: 3, maxNodes: 90)
             }
 
+            var buttons = directChildren.filter { $0.role == kAXButtonRole }
+            if buttons.isEmpty {
+                buttons = container.findAll(role: kAXButtonRole, limit: 6, maxNodes: 120)
+            }
+
             for staticText in staticTexts {
                 let normalized = normalizeBodyText(staticText.stringValue)
                 guard !normalized.isEmpty else { continue }
                 metadataTokensBuffer.append(contentsOf: metadataTokens(from: normalized))
+            }
+
+            for button in buttons {
+                let title = normalizeBodyText(button.title)
+                guard !title.isEmpty else { continue }
+                buttonTitlesBuffer.append(title)
             }
 
             for image in images {
@@ -406,6 +452,8 @@ struct ReadCommand: ParsableCommand {
             scoreBodyCandidate(lhs.body) < scoreBodyCandidate(rhs.body)
         }
 
+        let uniqueMetadataTokens = deduplicatePreservingOrder(metadataTokensBuffer)
+        let uniqueButtonTitles = deduplicatePreservingOrder(buttonTitlesBuffer)
         let metadata = parseRowMetadata(tokens: metadataTokensBuffer)
         let side = inferMessageSide(
             bodyFrame: bestBody?.frame,
@@ -413,7 +461,19 @@ struct ReadCommand: ParsableCommand {
             rowFrame: row.frame,
             transcriptRoot: transcriptRoot
         )
-        return RowAnalysis(bodyCandidate: bestBody, metadata: metadata, side: side, rowFrame: row.frame)
+        let systemLikeRow = isLikelySystemRow(
+            metadataTokens: uniqueMetadataTokens,
+            buttonTitles: uniqueButtonTitles,
+            bodyCandidate: bestBody
+        )
+        return RowAnalysis(
+            bodyCandidate: bestBody,
+            explicitAuthor: metadata.author,
+            timeRaw: metadata.timeRaw,
+            side: side,
+            rowFrame: row.frame,
+            isSystemLikeRow: systemLikeRow
+        )
     }
 
     private func extractMessageBody(from row: UIElement, runner: AXActionRunner) -> MessageBodyCandidate? {
@@ -518,7 +578,10 @@ struct ReadCommand: ParsableCommand {
                 continue
             }
 
-            if isLikelyCountToken(token) || isLikelySystemMetadataToken(token) {
+            if isLikelyCountToken(token)
+                || isLikelySystemMetadataToken(token)
+                || isLikelyAttachmentMetadataToken(token)
+            {
                 continue
             }
 
@@ -587,6 +650,58 @@ struct ReadCommand: ParsableCommand {
         return false
     }
 
+    private func isLikelyAttachmentMetadataToken(_ token: String) -> Bool {
+        let trimmed = token.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return false }
+
+        let lowered = trimmed.lowercased()
+        if lowered.hasPrefix("expiry") || lowered.hasPrefix("size:") {
+            return true
+        }
+        if lowered.contains("만료") || lowered.contains("용량") {
+            return true
+        }
+        if trimmed == "·" {
+            return true
+        }
+        if lowered.range(
+            of: #"\.(pdf|png|jpe?g|gif|webp|zip|hwp|docx?|pptx?|xlsx?)$"#,
+            options: .regularExpression
+        ) != nil {
+            return true
+        }
+
+        return false
+    }
+
+    private func isLikelyAttachmentButtonTitle(_ title: String) -> Bool {
+        let lowered = title.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        guard !lowered.isEmpty else { return false }
+        if lowered == "save" || lowered == "save as" {
+            return true
+        }
+        if lowered == "저장" || lowered == "다른 이름으로 저장" {
+            return true
+        }
+        return false
+    }
+
+    private func isLikelySystemRow(
+        metadataTokens: [String],
+        buttonTitles: [String],
+        bodyCandidate: MessageBodyCandidate?
+    ) -> Bool {
+        let hasAttachmentMetadata = metadataTokens.contains(where: isLikelyAttachmentMetadataToken)
+        let hasAttachmentActions = buttonTitles.contains(where: isLikelyAttachmentButtonTitle)
+        if hasAttachmentMetadata && hasAttachmentActions {
+            return true
+        }
+        if bodyCandidate == nil && (hasAttachmentMetadata || hasAttachmentActions) {
+            return true
+        }
+        return false
+    }
+
     private func inferMessageSide(
         bodyFrame: CGRect?,
         imageFrames: [CGRect],
@@ -621,111 +736,92 @@ struct ReadCommand: ParsableCommand {
         return .unknown
     }
 
-    private func computeOtherAnchorRatio(from analyses: [RowAnalysis], transcriptFrame: CGRect?) -> CGFloat? {
-        guard let transcriptFrame, transcriptFrame.width > 0 else { return nil }
-
-        var ratios: [CGFloat] = []
-        ratios.reserveCapacity(analyses.count)
-        for analysis in analyses {
-            guard analysis.metadata.author != nil else { continue }
-            guard let ratio = normalizedMidXRatio(for: analysis, transcriptFrame: transcriptFrame) else { continue }
-            ratios.append(ratio)
-        }
-        guard !ratios.isEmpty else { return nil }
-
-        ratios.sort()
-        return ratios[ratios.count / 2]
-    }
-
-    private func resolveAuthorFromContext(
-        at index: Int,
-        analyses: [RowAnalysis],
-        transcriptFrame: CGRect?,
-        otherAnchorRatio: CGFloat?
+    private func resolveAuthorInSegment(
+        analysis: RowAnalysis,
+        index: Int,
+        leftAnchorAuthor: String?,
+        leftAnchorTimeRaw: String?,
+        leftAnchorIndex: Int?
     ) -> (author: String?, source: String) {
-        let analysis = analyses[index]
-        if let explicitAuthor = analysis.metadata.author {
+        if let explicitAuthor = analysis.explicitAuthor {
             return (explicitAuthor, "explicit")
         }
 
-        let rowRatio = normalizedMidXRatio(for: analysis, transcriptFrame: transcriptFrame)
-        let likelyOtherByAnchor: Bool
-        if let rowRatio, let anchor = otherAnchorRatio {
-            likelyOtherByAnchor = abs(rowRatio - anchor) <= 0.085
-        } else {
-            likelyOtherByAnchor = false
-        }
-
-        let likelyOther = likelyOtherByAnchor || analysis.side == .left
-        if !likelyOther {
+        if analysis.side == .right || analysis.side == .unknown {
             return (nil, "default-me")
         }
 
-        var bestAuthor: String?
-        var bestScore = Int.min
-
-        let start = max(0, index - 3)
-        let end = min(analyses.count - 1, index + 2)
-        for neighborIndex in start...end {
-            guard neighborIndex != index else { continue }
-            let neighbor = analyses[neighborIndex]
-            guard let candidateAuthor = neighbor.metadata.author else { continue }
-
-            var score = 0
-            let distance = abs(neighborIndex - index)
-            score += max(0, 4 - distance)
-
-            if analysis.side != .unknown, neighbor.side == analysis.side {
-                score += 3
-            }
-
-            if let rowY = analysis.referenceFrame?.minY,
-               let candidateY = neighbor.referenceFrame?.minY
-            {
-                let deltaY = abs(rowY - candidateY)
-                if deltaY <= 150 { score += 2 }
-                if deltaY <= 70 { score += 1 }
-            }
-
-            if let rowTime = analysis.metadata.timeRaw,
-               let candidateTime = neighbor.metadata.timeRaw,
-               rowTime == candidateTime
-            {
-                score += 1
-            }
-
-            if neighbor.bodyCandidate == nil {
-                score += 1
-            }
-
-            if let rowRatio,
-               let candidateRatio = normalizedMidXRatio(for: neighbor, transcriptFrame: transcriptFrame),
-               let anchor = otherAnchorRatio
-            {
-                if abs(rowRatio - candidateRatio) <= 0.08 {
-                    score += 1
-                }
-                if abs(candidateRatio - anchor) <= 0.10 {
-                    score += 1
-                }
-            }
-
-            if score > bestScore {
-                bestScore = score
-                bestAuthor = candidateAuthor
-            }
+        guard
+            let anchorAuthor = leftAnchorAuthor,
+            let anchorIndex = leftAnchorIndex,
+            index >= anchorIndex,
+            index - anchorIndex <= 2
+        else {
+            return (nil, "left-unresolved")
         }
 
-        if let bestAuthor, bestScore >= 6 {
-            return (bestAuthor, "context")
+        guard isForwardTimeProgress(anchorTimeRaw: leftAnchorTimeRaw, candidateTimeRaw: analysis.timeRaw) else {
+            return (nil, "left-time-guard")
         }
 
-        return (nil, "default-me")
+        return (anchorAuthor, "left-chain")
     }
 
-    private func normalizedMidXRatio(for analysis: RowAnalysis, transcriptFrame: CGRect?) -> CGFloat? {
-        guard let transcriptFrame, transcriptFrame.width > 0, let frame = analysis.referenceFrame else { return nil }
-        return (frame.midX - transcriptFrame.minX) / transcriptFrame.width
+    private func isForwardTimeProgress(anchorTimeRaw: String?, candidateTimeRaw: String?) -> Bool {
+        guard
+            let anchorMinutes = minuteOfDay(from: anchorTimeRaw),
+            let candidateMinutes = minuteOfDay(from: candidateTimeRaw)
+        else {
+            return true
+        }
+
+        return candidateMinutes >= anchorMinutes
+    }
+
+    private func minuteOfDay(from timeRaw: String?) -> Int? {
+        guard let timeRaw else { return nil }
+        let trimmed = timeRaw.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return nil }
+
+        if let meridiemRange = trimmed.range(
+            of: #"(오전|오후)\s*([1-9]|1[0-2]):([0-5][0-9])"#,
+            options: .regularExpression
+        ) {
+            let token = String(trimmed[meridiemRange])
+                .replacingOccurrences(of: "오전", with: "")
+                .replacingOccurrences(of: "오후", with: "")
+                .trimmingCharacters(in: .whitespaces)
+            let parts = token.split(separator: ":")
+            guard parts.count == 2,
+                  let hourPart = Int(parts[0]),
+                  let minutePart = Int(parts[1])
+            else {
+                return nil
+            }
+
+            var hour = hourPart % 12
+            if trimmed.contains("오후") {
+                hour += 12
+            }
+            return hour * 60 + minutePart
+        }
+
+        if let range = trimmed.range(
+            of: #"([01]?[0-9]|2[0-3]):([0-5][0-9])"#,
+            options: .regularExpression
+        ) {
+            let token = String(trimmed[range])
+            let parts = token.split(separator: ":")
+            guard parts.count == 2,
+                  let hour = Int(parts[0]),
+                  let minute = Int(parts[1])
+            else {
+                return nil
+            }
+            return hour * 60 + minute
+        }
+
+        return nil
     }
 
     private func firstAncestor(of element: UIElement, role: String, maxHops: Int) -> UIElement? {
