@@ -17,7 +17,13 @@ https://github.com/user-attachments/assets/c620b2e3-7106-40fa-86d1-ed847e3b1a6f
 - macOS 13+
 - [macOS용 KakaoTalk](https://apps.apple.com/kr/app/kakaotalk/id869223134?mt=12) 설치
 
-### 설치
+### 설치 (Homebrew 권장)
+
+```bash
+brew install channprj/tap/kmsg
+```
+
+### 설치 (직접 다운로드)
 
 ```bash
 mkdir -p ~/.local/bin && curl -fL https://github.com/channprj/kmsg/releases/latest/download/kmsg-macos-universal -o ~/.local/bin/kmsg && chmod +x ~/.local/bin/kmsg
@@ -26,7 +32,7 @@ mkdir -p ~/.local/bin && curl -fL https://github.com/channprj/kmsg/releases/late
 설치 확인은 아래와 같이 진행합니다.
 
 ```bash
-~/.local/bin/kmsg status
+kmsg status
 ```
 
 권한 팝업이 뜨면 허용해 주세요.
@@ -364,6 +370,8 @@ README 디버깅 가이드도 함께 업데이트해 주세요.
 
 `v*` 태그를 푸시하면 GitHub Actions가 자동으로 빌드해서
 `kmsg-macos-universal` 파일을 Releases에 업로드합니다.
+또한 `TAP_REPO_TOKEN`이 설정되어 있으면 `channprj/homebrew-tap`의
+`Formula/kmsg.rb`를 자동으로 갱신합니다.
 
 배포 전에 `VERSION` 파일 값을 먼저 업데이트하세요.
 
@@ -372,19 +380,34 @@ README 디버깅 가이드도 함께 업데이트해 주세요.
 gh auth login -h github.com
 
 # 배포 태그 생성/푸시
-git tag v0.1.3
-git push origin v0.1.3
+git tag v0.2.3
+git push origin v0.2.3
 ```
 
 필요하면 Actions를 수동 실행할 수 있습니다.
 
 ```bash
-gh workflow run release.yml -f tag=v0.1.3
+gh workflow run release.yml -f tag=v0.2.3
+```
+
+### Homebrew 자동 동기화 설정 (최초 1회)
+
+1. `channprj/homebrew-tap` 저장소를 만들고 `Formula/` 디렉터리를 준비합니다.
+2. `kmsg` 저장소 Secrets에 `TAP_REPO_TOKEN`을 추가합니다.
+   - 권한: `homebrew-tap` 저장소 `contents: write`
+3. tap 저장소 기본 브랜치가 `main`이 아니면
+   `.github/workflows/release.yml`의 `TAP_REPO_REF` 값을 맞춰 주세요.
+
+릴리즈 후 사용자는 아래 명령으로 설치할 수 있습니다.
+
+```bash
+brew install channprj/tap/kmsg
 ```
 
 ## 기타
 
-- 설치는 `kmsg-macos-universal` 을 사용합니다.
+- Homebrew 설치: `brew install channprj/tap/kmsg`
+- 직접 설치는 `kmsg-macos-universal` 아티팩트를 사용합니다.
 - 다운로드 실패 시 https://github.com/channprj/kmsg/releases 에서 직접 내려받아 `~/.local/bin/kmsg`로 저장 후 `chmod +x ~/.local/bin/kmsg` 를 진행하시면 됩니다.
 
 ## Inspiration
