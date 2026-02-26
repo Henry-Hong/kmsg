@@ -26,7 +26,7 @@ struct SendCommand: ParsableCommand {
     @Flag(name: .long, help: "Rebuild AX path cache for this run")
     var refreshCache: Bool = false
 
-    @Flag(name: [.short, .long], help: "Keep auto-opened chat window after sending message")
+    @Flag(name: [.short, .long], help: "Keep chat window open after sending message")
     var keepWindow: Bool = false
 
     @Flag(
@@ -602,6 +602,11 @@ struct SendCommand: ParsableCommand {
     }
 
     private func sendMessageToWindow(_ window: UIElement, kakao: KakaoTalkApp, runner: AXActionRunner) throws {
+        // Bring KakaoTalk to front so CGEvent key events (Enter) are delivered to KakaoTalk, not the terminal
+        kakao.activate()
+        _ = tryRaiseWindow(window, runner: runner)
+        Thread.sleep(forTimeInterval: 0.1)
+
         guard let input = resolveMessageInputField(chatWindow: window, kakao: kakao, runner: runner) else {
             let forcedTyped = forceTypeIntoChatWindow(chatWindow: window, kakao: kakao, runner: runner)
             guard forcedTyped else {
@@ -653,10 +658,6 @@ struct SendCommand: ParsableCommand {
         resolver: ChatWindowResolver,
         runner: AXActionRunner
     ) {
-        guard resolution.openedViaSearch else {
-            runner.log("send: keeping existing window (not auto-opened)")
-            return
-        }
         guard !keepWindow else {
             runner.log("send: keep-window enabled; skipping auto-close")
             return
