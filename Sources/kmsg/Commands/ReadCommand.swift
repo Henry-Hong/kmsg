@@ -484,6 +484,22 @@ struct ReadCommand: ParsableCommand {
     }
 
     private func inferMessageSide(bodyFrame: CGRect?, row: UIElement, transcriptRoot: UIElement) -> MessageSide {
+        // Primary: AXImage(프로필) 위치 대비 body text 위치로 판단
+        if let bodyF = bodyFrame {
+            let cell = row.findAll(role: kAXCellRole, limit: 1, maxNodes: 20).first ?? row
+            let images = cell.findAll(role: kAXImageRole, limit: 4, maxNodes: 80)
+            for image in images {
+                guard let imageFrame = image.frame else { continue }
+                if imageFrame.midX + 10 < bodyF.minX {
+                    return .left
+                }
+                if imageFrame.midX > bodyF.maxX + 10 {
+                    return .right
+                }
+            }
+        }
+
+        // Fallback: midX ratio 방식
         let referenceFrame = bodyFrame ?? row.frame
         guard let candidateFrame = referenceFrame, let transcriptFrame = transcriptRoot.frame else {
             return .unknown
