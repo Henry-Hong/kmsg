@@ -259,8 +259,17 @@ public final class KakaoTalkApp: Sendable {
 
     /// Get the chat list window
     public var chatListWindow: UIElement? {
-        // Chat list might be a separate window or tab within main window
-        findWindow(titleContaining: "채팅") ?? mainWindow
+        // KakaoTalk 26.x: the chat list window is titled "카카오톡"
+        // and contains navigation buttons with id "chatrooms" / "friends"
+        if let w = findWindow(titleContaining: "채팅") { return w }
+        if let w = findWindow(title: "카카오톡") { return w }
+        // Fallback: find the window containing the chatrooms navigation button
+        for window in windows {
+            if window.findFirst(identifier: "chatrooms") != nil {
+                return window
+            }
+        }
+        return mainWindow
     }
 
     // MARK: - UI Navigation
