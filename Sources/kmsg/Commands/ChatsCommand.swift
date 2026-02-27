@@ -25,9 +25,17 @@ struct ChatsCommand: ParsableCommand {
         let kakao = try KakaoTalkApp()
         let runner = AXActionRunner(traceEnabled: traceAX)
 
-        guard let mainWindow = kakao.ensureMainWindow(timeout: 5.0, trace: { message in
+        // Prefer the chat list window ("카카오톡") over any conversation window
+        let mainWindow: UIElement
+        if let chatListWindow = kakao.chatListWindow {
+            mainWindow = chatListWindow
+            runner.log("chats: using chatListWindow title='\(chatListWindow.title ?? "")'")
+        } else if let fallback = kakao.ensureMainWindow(timeout: 5.0, trace: { message in
             runner.log(message)
-        }) else {
+        }) {
+            mainWindow = fallback
+            runner.log("chats: fallback to ensureMainWindow")
+        } else {
             print("Could not find a usable KakaoTalk window.")
             throw ExitCode.failure
         }
@@ -95,28 +103,55 @@ struct ChatsCommand: ParsableCommand {
     }
 
     private func extractChatTitle(from element: UIElement) -> String {
-        // Try to find the chat name from various possible locations
         if let title = element.title, !title.isEmpty {
             return title
         }
 
-        // Look for static text elements that might contain the name
         let staticTexts = element.findAll(role: kAXStaticTextRole)
         for text in staticTexts {
-            if let value = text.stringValue, !value.isEmpty {
-                return value
-            }
+            let identifier = text.identifier ?? ""
+            // Skip unread count badge (id: "Count Label")
+            if identifier == "Count Label" { continue }
+            guard let value = text.stringValue, !value.isEmpty else { continue }
+            // Skip time-like values (e.g. "21:59", "15:19")
+            if isTimeLikeValue(value) { continue }
+            // Skip pure numeric or "999+" style unread counts
+            if value.allSatisfy({ $0.isNumber || $0 == "+" || $0 == "," }) { continue }
+            return value
         }
 
         return "(Unknown Chat)"
     }
 
     private func extractLastMessage(from element: UIElement) -> String? {
-        // Find additional static text that might be the last message
+        // KakaoTalk 26.x: last message is in AXTextArea inside AXScrollArea
+        let textAreas = element.findAll(role: kAXTextAreaRole)
+        for textArea in textAreas {
+            if let value = textArea.stringValue, !value.isEmpty {
+                return value
+            }
+        }
+        // Fallback: second static text that isn't count/time
         let staticTexts = element.findAll(role: kAXStaticTextRole)
         if staticTexts.count > 1 {
             return staticTexts[1].stringValue
         }
         return nil
+    }
+
+    private func isTimeLikeValue(_ value: String) -> Bool {
+        let trimmed = value.trimmingCharacters(in: .whitespaces)
+        let parts = trimmed.split(separator: ":")
+        if parts.count == 2,
+           parts[0].count <= 2, parts[1].count == 2,
+           parts[0].allSatisfy(\.isNumber), parts[1].allSatisfy(\.isNumber)
+        {
+            return true
+        }
+        // Date-like values (e.g. "2월 27일", "어제")
+        if trimmed.hasSuffix("일") || trimmed == "어제" || trimmed == "그저께" {
+            return true
+        }
+        return false
     }
 }
