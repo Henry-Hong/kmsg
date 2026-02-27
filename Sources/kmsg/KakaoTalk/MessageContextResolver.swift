@@ -124,10 +124,11 @@ struct MessageContextResolver {
             return nil
         }
 
-        let scored = candidates.map { candidate in
+        // Phase 1: spatial/role scoring only (no BFS)
+        var phase1 = candidates.map { candidate in
             (
                 candidate: candidate,
-                score: scoreTranscriptContainer(
+                score: scoreTranscriptContainerSpatial(
                     candidate,
                     chatWindow: chatWindow,
                     inputElement: inputElement
@@ -135,6 +136,14 @@ struct MessageContextResolver {
             )
         }
         .sorted { lhs, rhs in lhs.score > rhs.score }
+
+        // Phase 2: child bonus via BFS for top 3 candidates only
+        let topCount = min(3, phase1.count)
+        for i in 0..<topCount {
+            guard phase1[i].score > 0 else { continue }
+            phase1[i].score += scoreTranscriptContainerChildBonus(phase1[i].candidate)
+        }
+        let scored = phase1.sorted { lhs, rhs in lhs.score > rhs.score }
 
         if let top = scored.first {
             runner.log("read: transcript candidates=\(scored.count) bestScore=\(Int(top.score))")
@@ -144,16 +153,27 @@ struct MessageContextResolver {
     }
 
     private func collectTranscriptContainers(from root: UIElement) -> [UIElement] {
+        let roles: Set<String> = [
+            kAXScrollAreaRole, kAXTableRole, kAXOutlineRole, kAXListRole, kAXGroupRole,
+        ]
+        let roleLimits: [String: Int] = [
+            kAXScrollAreaRole: 12,
+            kAXTableRole: 8,
+            kAXOutlineRole: 8,
+            kAXListRole: 8,
+            kAXGroupRole: 10,
+        ]
+        let found = root.findAll(roles: roles, roleLimits: roleLimits, maxNodes: 600)
+
         var containers: [UIElement] = []
-        containers.append(contentsOf: root.findAll(role: kAXScrollAreaRole, limit: 12, maxNodes: 500))
-        containers.append(contentsOf: root.findAll(role: kAXTableRole, limit: 8, maxNodes: 450))
-        containers.append(contentsOf: root.findAll(role: kAXOutlineRole, limit: 8, maxNodes: 450))
-        containers.append(contentsOf: root.findAll(role: kAXListRole, limit: 8, maxNodes: 450))
-        containers.append(contentsOf: root.findAll(role: kAXGroupRole, limit: 10, maxNodes: 420))
+        for role in [kAXScrollAreaRole, kAXTableRole, kAXOutlineRole, kAXListRole, kAXGroupRole] {
+            containers.append(contentsOf: found[role] ?? [])
+        }
         return containers
     }
 
-    private func scoreTranscriptContainer(_ candidate: UIElement, chatWindow: UIElement, inputElement: UIElement) -> Double {
+    /// Phase 1: spatial/role-based scoring (no BFS calls)
+    private func scoreTranscriptContainerSpatial(_ candidate: UIElement, chatWindow: UIElement, inputElement: UIElement) -> Double {
         guard
             let windowFrame = chatWindow.frame,
             let inputFrame = inputElement.frame,
@@ -205,16 +225,24 @@ struct MessageContextResolver {
             score -= 3_000
         }
 
-        let rowCount = candidate.findAll(role: kAXRowRole, limit: 20, maxNodes: 240).count
-        let textCount = candidate.findAll(role: kAXStaticTextRole, limit: 20, maxNodes: 240).count
-        score += Double(rowCount * 150)
-        score += Double(textCount * 25)
-
         if candidateFrame.height > inputFrame.height * 2.2 {
             score += 320
         }
 
         return score
+    }
+
+    /// Phase 2: child bonus via single multi-role BFS
+    private func scoreTranscriptContainerChildBonus(_ candidate: UIElement) -> Double {
+        let roles: Set<String> = [kAXRowRole, kAXStaticTextRole]
+        let found = candidate.findAll(
+            roles: roles,
+            roleLimits: [kAXRowRole: 20, kAXStaticTextRole: 20],
+            maxNodes: 240
+        )
+        let rowCount = found[kAXRowRole]?.count ?? 0
+        let textCount = found[kAXStaticTextRole]?.count ?? 0
+        return Double(rowCount * 150) + Double(textCount * 25)
     }
 
     private func preferredChatPaneRoot(for inputElement: UIElement, in chatWindow: UIElement) -> UIElement? {

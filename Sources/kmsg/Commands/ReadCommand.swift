@@ -1,3 +1,4 @@
+import ApplicationServices.HIServices
 import ArgumentParser
 import Foundation
 
@@ -62,6 +63,27 @@ struct ReadCommand: ParsableCommand {
         case left
         case right
         case unknown
+    }
+
+    private final class FrameCache {
+        private var entries: [(element: AXUIElement, frame: CGRect?)] = []
+        private var buckets: [CFHashCode: [Int]] = [:]
+
+        func frame(of element: UIElement) -> CGRect? {
+            let hash = CFHash(element.axElement)
+            if let indices = buckets[hash] {
+                for idx in indices {
+                    if CFEqual(entries[idx].element, element.axElement) {
+                        return entries[idx].frame
+                    }
+                }
+            }
+            let f = element.frame
+            let idx = entries.count
+            entries.append((element: element.axElement, frame: f))
+            buckets[hash, default: []].append(idx)
+            return f
+        }
     }
 
     static let configuration = CommandConfiguration(
@@ -163,11 +185,13 @@ struct ReadCommand: ParsableCommand {
             return
         }
 
+        let frameCache = FrameCache()
         let messageRows = collectTranscriptRows(
             from: messageContext.transcriptRoot,
             inputElement: messageContext.inputElement,
             messageLimit: limit,
-            runner: runner
+            runner: runner,
+            frameCache: frameCache
         )
         if messageRows.isEmpty {
             print("No message rows found in the chat transcript area.")
@@ -179,7 +203,8 @@ struct ReadCommand: ParsableCommand {
             from: messageRows,
             transcriptRoot: messageContext.transcriptRoot,
             limit: limit,
-            runner: runner
+            runner: runner,
+            frameCache: frameCache
         )
 
         if displayMessages.isEmpty {
@@ -211,9 +236,10 @@ struct ReadCommand: ParsableCommand {
         from transcriptRoot: UIElement,
         inputElement: UIElement,
         messageLimit: Int,
-        runner: AXActionRunner
+        runner: AXActionRunner,
+        frameCache: FrameCache
     ) -> [UIElement] {
-        let targetRowCount = max(messageLimit * 8, 80)
+        let targetRowCount = max(messageLimit * 4, 50)
         var rows: [UIElement] = []
 
         // Prefer direct row children from transcript containers to avoid BFS early-stop bias.
@@ -246,23 +272,23 @@ struct ReadCommand: ParsableCommand {
         var filtered = deduplicated
         if let inputFrame = inputElement.frame {
             filtered = deduplicated.filter { row in
-                guard let rowFrame = row.frame else { return true }
+                guard let rowFrame = frameCache.frame(of: row) else { return true }
                 return rowFrame.maxY <= inputFrame.minY + 20
             }
         }
 
         let sorted = filtered.sorted { lhs, rhs in
-            let lhsY = lhs.frame?.minY ?? .greatestFiniteMagnitude
-            let rhsY = rhs.frame?.minY ?? .greatestFiniteMagnitude
+            let lhsY = frameCache.frame(of: lhs)?.minY ?? .greatestFiniteMagnitude
+            let rhsY = frameCache.frame(of: rhs)?.minY ?? .greatestFiniteMagnitude
             if lhsY == rhsY {
-                let lhsX = lhs.frame?.minX ?? .greatestFiniteMagnitude
-                let rhsX = rhs.frame?.minX ?? .greatestFiniteMagnitude
+                let lhsX = frameCache.frame(of: lhs)?.minX ?? .greatestFiniteMagnitude
+                let rhsX = frameCache.frame(of: rhs)?.minX ?? .greatestFiniteMagnitude
                 return lhsX < rhsX
             }
             return lhsY < rhsY
         }
 
-        let recentWindow = max(messageLimit * 12, 160)
+        let recentWindow = max(messageLimit * 6, 80)
         let recentRows = Array(sorted.suffix(recentWindow))
         runner.log("read: transcript rows raw=\(rows.count), unique=\(deduplicated.count), filtered=\(sorted.count), recent=\(recentRows.count)")
         return recentRows
@@ -272,9 +298,12 @@ struct ReadCommand: ParsableCommand {
         from rows: [UIElement],
         transcriptRoot: UIElement,
         limit: Int,
-        runner: AXActionRunner
+        runner: AXActionRunner,
+        frameCache: FrameCache
     ) -> [ReadMessage] {
-        let analyses = rows.map { analyzeRow($0, transcriptRoot: transcriptRoot, runner: runner) }
+        let analysisBudget = max(limit * 5, 60)
+        let rowsToAnalyze = Array(rows.suffix(analysisBudget))
+        let analyses = rowsToAnalyze.map { analyzeRow($0, transcriptRoot: transcriptRoot, runner: runner, frameCache: frameCache) }
 
         var messages: [ReadMessage] = []
         messages.reserveCapacity(min(analyses.count, limit * 2))
@@ -369,7 +398,7 @@ struct ReadCommand: ParsableCommand {
         element.children.filter { $0.role == kAXRowRole }
     }
 
-    private func analyzeRow(_ row: UIElement, transcriptRoot: UIElement, runner: AXActionRunner) -> RowAnalysis {
+    private func analyzeRow(_ row: UIElement, transcriptRoot: UIElement, runner: AXActionRunner, frameCache: FrameCache) -> RowAnalysis {
         let directCells = row.children.filter { $0.role == kAXCellRole }
         let containers = directCells.isEmpty ? [row] : directCells
 
@@ -379,26 +408,50 @@ struct ReadCommand: ParsableCommand {
         var imageFrames: [CGRect] = []
 
         for container in containers {
-            let directChildren = container.children
+            var textAreas: [UIElement] = []
+            var staticTexts: [UIElement] = []
+            var images: [UIElement] = []
+            var buttons: [UIElement] = []
 
-            var textAreas = directChildren.filter { $0.role == kAXTextAreaRole }
-            if textAreas.isEmpty {
-                textAreas = container.findAll(role: kAXTextAreaRole, limit: 4, maxNodes: 120)
+            // Single pass over direct children to classify by role
+            for child in container.children {
+                switch child.role {
+                case kAXTextAreaRole:
+                    textAreas.append(child)
+                case kAXStaticTextRole:
+                    staticTexts.append(child)
+                case kAXImageRole:
+                    images.append(child)
+                case kAXButtonRole:
+                    buttons.append(child)
+                default:
+                    break
+                }
             }
 
-            var staticTexts = directChildren.filter { $0.role == kAXStaticTextRole }
-            if staticTexts.isEmpty {
-                staticTexts = container.findAll(role: kAXStaticTextRole, limit: 8, maxNodes: 140)
-            }
+            // Single multi-role BFS fallback for any empty buckets
+            let missingRoles = [
+                textAreas.isEmpty ? kAXTextAreaRole : nil,
+                staticTexts.isEmpty ? kAXStaticTextRole : nil,
+                images.isEmpty ? kAXImageRole : nil,
+                buttons.isEmpty ? kAXButtonRole : nil,
+            ].compactMap { $0 }
 
-            var images = directChildren.filter { $0.role == kAXImageRole }
-            if images.isEmpty {
-                images = container.findAll(role: kAXImageRole, limit: 3, maxNodes: 90)
-            }
-
-            var buttons = directChildren.filter { $0.role == kAXButtonRole }
-            if buttons.isEmpty {
-                buttons = container.findAll(role: kAXButtonRole, limit: 6, maxNodes: 120)
+            if !missingRoles.isEmpty {
+                let found = container.findAll(
+                    roles: Set(missingRoles),
+                    roleLimits: [
+                        kAXTextAreaRole: 4,
+                        kAXStaticTextRole: 8,
+                        kAXImageRole: 3,
+                        kAXButtonRole: 6,
+                    ],
+                    maxNodes: 140
+                )
+                if textAreas.isEmpty { textAreas = found[kAXTextAreaRole] ?? [] }
+                if staticTexts.isEmpty { staticTexts = found[kAXStaticTextRole] ?? [] }
+                if images.isEmpty { images = found[kAXImageRole] ?? [] }
+                if buttons.isEmpty { buttons = found[kAXButtonRole] ?? [] }
             }
 
             for staticText in staticTexts {
@@ -450,10 +503,11 @@ struct ReadCommand: ParsableCommand {
         let uniqueMetadataTokens = deduplicatePreservingOrder(metadataTokensBuffer)
         let uniqueButtonTitles = deduplicatePreservingOrder(buttonTitlesBuffer)
         let metadata = parseRowMetadata(tokens: metadataTokensBuffer)
+        let cachedRowFrame = frameCache.frame(of: row)
         let side = inferMessageSide(
             bodyFrame: bestBody?.frame,
             imageFrames: imageFrames,
-            rowFrame: row.frame,
+            rowFrame: cachedRowFrame,
             transcriptRoot: transcriptRoot
         )
         let systemLikeRow = isLikelySystemRow(
@@ -466,47 +520,9 @@ struct ReadCommand: ParsableCommand {
             explicitAuthor: metadata.author,
             timeRaw: metadata.timeRaw,
             side: side,
-            rowFrame: row.frame,
+            rowFrame: cachedRowFrame,
             isSystemLikeRow: systemLikeRow
         )
-    }
-
-    private func extractMessageBody(from row: UIElement, runner: AXActionRunner) -> MessageBodyCandidate? {
-        let cells = row.findAll(role: kAXCellRole, limit: 8, maxNodes: 180)
-        let containers = cells.isEmpty ? [row] : cells
-
-        var candidates: [MessageBodyCandidate] = []
-        for container in containers {
-            let textAreas = container.findAll(role: kAXTextAreaRole, limit: 6, maxNodes: 220)
-            for textArea in textAreas {
-                let normalized = normalizeBodyText(textArea.stringValue)
-                guard !normalized.isEmpty else { continue }
-
-                var resolved = normalized
-                if shouldPromoteLinkTitle(for: normalized),
-                   let fullLink = bestLinkTitle(from: textArea) ?? bestLinkTitle(from: container)
-                {
-                    if isURLOnlyText(normalized) {
-                        resolved = fullLink
-                    } else if !normalized.contains(fullLink) {
-                        resolved = "\(normalized)\n\(fullLink)"
-                    }
-                    runner.log("read: link title used as fallback")
-                }
-                candidates.append(MessageBodyCandidate(body: resolved, frame: textArea.frame))
-            }
-
-            if textAreas.isEmpty, let linkOnlyText = bestLinkTitle(from: container) {
-                candidates.append(MessageBodyCandidate(body: linkOnlyText, frame: container.frame))
-            }
-        }
-
-        let uniqueCandidates = deduplicateBodyCandidates(candidates)
-        guard !uniqueCandidates.isEmpty else { return nil }
-
-        return uniqueCandidates.max { lhs, rhs in
-            scoreBodyCandidate(lhs.body) < scoreBodyCandidate(rhs.body)
-        }
     }
 
     private func extractFallbackMessages(from transcriptRoot: UIElement, limit: Int, runner: AXActionRunner) -> [ReadMessage] {

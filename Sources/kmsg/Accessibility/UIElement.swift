@@ -296,6 +296,44 @@ public final class UIElement: @unchecked Sendable {
         return nil
     }
 
+    /// Find elements matching any of the given roles in a single BFS pass
+    public func findAll(
+        roles: Set<String>,
+        roleLimits: [String: Int] = [:],
+        maxNodes: Int = 500
+    ) -> [String: [UIElement]] {
+        var results: [String: [UIElement]] = [:]
+        for role in roles { results[role] = [] }
+
+        var saturated = 0
+        let totalRoles = roles.count
+        var queue = children
+        var index = 0
+        var visited = 0
+
+        while index < queue.count && visited < maxNodes && saturated < totalRoles {
+            let current = queue[index]
+            index += 1
+            visited += 1
+
+            if let role = current.role, roles.contains(role) {
+                let limit = roleLimits[role] ?? .max
+                if results[role]!.count < limit {
+                    results[role]!.append(current)
+                    if results[role]!.count >= limit {
+                        saturated += 1
+                    }
+                }
+            }
+
+            if saturated < totalRoles && visited < maxNodes {
+                queue.append(contentsOf: current.children)
+            }
+        }
+
+        return results
+    }
+
     /// Find elements by role
     public func findAll(role: String) -> [UIElement] {
         findAll { $0.role == role }
